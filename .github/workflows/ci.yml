@@ -89,6 +89,7 @@ jobs:
           brew install bison flex ninja boost libuv yaml-cpp mongo-cxx-driver
           brew tap mongodb/brew
           brew trust --formula mongodb/brew/mongodb-community@8.0
+          brew trust --formula mongodb/brew/mongodb-database-tools
           brew install mongodb-community@8.0
           {
             echo "$(brew --prefix bison)/bin"
@@ -125,7 +126,12 @@ jobs:
       ASTRON_MONGO_TEST_EXTERNAL: "1"
     services:
       mongodb:
-        image: mongo:8.0
+        # Keep Linux CI on 7.0: MongoDB 8.0's TCMalloc/rseq incompatibility
+        # affects kernels 6.19–7.0.13, and Ubuntu's patched kernel versions
+        # can still be misdetected by MongoDB's startup guard. Revisit when
+        # this runner and image are verified compatible (SERVER-121912,
+        # SERVER-136848).
+        image: mongo:7.0
         ports:
           - 57024:27017
         options: >-

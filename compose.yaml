@@ -61,7 +61,11 @@ services:
 
   mongodb:
     profiles: [mongodb]
-    image: mongo:8.0
+    # Use 7.0 by default for Linux hosts affected by MongoDB 8.0's
+    # TCMalloc/rseq incompatibility and Ubuntu kernel-version misdetection.
+    # Override only on a verified-compatible host/image (SERVER-121912,
+    # SERVER-136848).
+    image: ${ASTRON_MONGO_IMAGE:-mongo:7.0}
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 5s
