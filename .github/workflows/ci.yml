@@ -1,0 +1,358 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-build:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: vcpkg install boost-icl libuv yaml-cpp mongo-cxx-driver --triplet x64-windows
+
+      - name: Add MongoDB and vcpkg runtime libraries to PATH
+        shell: pwsh
+        run: |
+          $mongoServer = Get-ChildItem 'C:\Program Files\MongoDB\Server' -Directory |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+          if (-not $mongoServer) {
+            throw 'MongoDB server was not found on the Windows runner.'
+          }
+          "$($mongoServer.FullName)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin" |
+            Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure
+        shell: pwsh
+        run: >-
+          cmake -S . -B "$env:RUNNER_TEMP\astron-build"
+          -G "Visual Studio 17 2022" -A x64
+          "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows
+          -DASTRON_REGENERATE_DC_PARSER=OFF
+          -DBUILD_DB_MONGO=ON
+          -DASTRON_ENABLE_INTEGRATION_TESTS=ON
+
+      - name: Build
+        run: cmake --build "$env:RUNNER_TEMP\astron-build" --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir "$env:RUNNER_TEMP\astron-build" -C Release --output-on-failure
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          $packageDir = "$env:RUNNER_TEMP\astron-windows-x64"
+          New-Item -ItemType Directory -Path $packageDir | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\astron-build\Release\astrond.exe" $packageDir
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\bin\*.dll" $packageDir
+          Copy-Item "docs\building\binary-artifact-readme.txt" "$packageDir\README.txt"
+          Compress-Archive -Path "$packageDir\*" -DestinationPath "$env:RUNNER_TEMP\astron-windows-x64.zip" -Force
+
+      - name: Upload Windows build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astron-windows-x64
+          path: ${{ runner.temp }}/astron-windows-x64.zip
+          if-no-files-found: error
+
+  macos-tests:
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install bison flex ninja boost libuv yaml-cpp mongo-cxx-driver
+          brew tap mongodb/brew
+          brew trust mongodb/brew
+          brew install mongodb-community@8.0
+          {
+            echo "$(brew --prefix bison)/bin"
+            echo "$(brew --prefix flex)/bin"
+            echo "$(brew --prefix mongodb-community@8.0)/bin"
+          } >> "$GITHUB_PATH"
+
+      - name: Configure
+        run: >-
+          cmake -S . -B "$RUNNER_TEMP/astron-build" -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DASTRON_REGENERATE_DC_PARSER=ON
+          -DBUILD_DB_MONGO=ON
+          -DASTRON_ENABLE_INTEGRATION_TESTS=ON
+          "-DCMAKE_PREFIX_PATH=$(brew --prefix);$(brew --prefix mongo-cxx-driver)"
+
+      - name: Build
+        run: cmake --build "$RUNNER_TEMP/astron-build" --parallel 3
+
+      - name: Test
+        run: ctest --test-dir "$RUNNER_TEMP/astron-build" --output-on-failure
+
+      - name: Package macOS build
+        run: |
+          package_dir="$RUNNER_TEMP/astron-macos"
+          mkdir -p "$package_dir"
+          cp "$RUNNER_TEMP/astron-build/astrond" "$package_dir/astrond"
+          cp docs/building/binary-artifact-readme.txt "$package_dir/README.txt"
+          printf '\nArchitecture: %s\n' "$(uname -m)" >> "$package_dir/README.txt"
+          bundle_search_dirs="$(brew --prefix)/lib;$(brew --prefix mongo-cxx-driver)/lib"
+          cmake \
+            "-DASTRON_BUNDLE_EXECUTABLE=$package_dir/astrond" \
+            "-DASTRON_BUNDLE_SEARCH_DIRS=$bundle_search_dirs" \
+            -P .github/scripts/fixup-macos-bundle.cmake
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/astron-macos.tar.gz" astron-macos
+
+      - name: Upload macOS build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: astron-macos
+          path: ${{ runner.temp }}/astron-macos.tar.gz
+          if-no-files-found: error
+
+  linux-tests:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: gcc, cxx: g++ }
+          - { cc: clang, cxx: clang++ }
+    env:
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
+      ASTRON_MONGO_TEST_EXTERNAL: "1"
+    services:
+      mongodb:
+        # Keep Linux CI on 7.0: MongoDB 8.0's TCMalloc/rseq incompatibility
+        # affects kernels 6.19–7.0.13, and Ubuntu's patched kernel versions
+        # can still be misdetected by MongoDB's startup guard. Revisit when
+        # this runner and image are verified compatible (SERVER-121912,
+        # SERVER-136848).
+        image: mongo:7.0
+        ports:
+          - 57024:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison build-essential clang cmake flex libboost-dev libicu-dev \
+            libpq-dev libsasl2-dev libsoci-dev libsoci-postgresql4.0 \
+            libsnappy-dev libssl-dev libuv1-dev libyaml-cpp-dev libzstd-dev \
+            ninja-build patchelf pkg-config postgresql-16 zlib1g-dev
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+
+      - name: Build MongoDB C++ driver
+        run: |
+          docker build --target mongo-driver --tag astron-mongo-driver:ci .
+          driver_container="$(docker create astron-mongo-driver:ci)"
+          mkdir -p "$RUNNER_TEMP/mongodb"
+          docker cp "$driver_container:/opt/mongodb/." "$RUNNER_TEMP/mongodb/"
+          docker rm "$driver_container"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/mongodb/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: >-
+          cmake -S . -B "$RUNNER_TEMP/astron-build" -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DASTRON_REGENERATE_DC_PARSER=ON
+          -DBUILD_DB_MONGO=ON
+          -DBUILD_DB_POSTGRESQL=ON
+          -DASTRON_ENABLE_INTEGRATION_TESTS=ON
+          "-DCMAKE_PREFIX_PATH=$RUNNER_TEMP/mongodb"
+
+      - name: Build
+        run: cmake --build "$RUNNER_TEMP/astron-build" --parallel 3
+
+      - name: Test
+        run: ctest --test-dir "$RUNNER_TEMP/astron-build" --output-on-failure
+
+      - name: Package Linux build
+        if: matrix.compiler.cc == 'gcc'
+        run: |
+          bash .github/scripts/package-linux.sh \
+            "$RUNNER_TEMP/astron-build/astrond" \
+            "$RUNNER_TEMP/astron-linux-x64" \
+            docs/building/binary-artifact-readme.txt \
+            "$RUNNER_TEMP/astron-linux-x64.tar.gz"
+
+      - name: Upload Linux build artifact
+        if: matrix.compiler.cc == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: astron-linux-x64
+          path: ${{ runner.temp }}/astron-linux-x64.tar.gz
+          if-no-files-found: error
+
+  build:
+    runs-on: ubuntu-24.04
+    needs: [windows-build, macos-tests, linux-tests]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Build container image
+        run: docker build --build-arg "ASTRON_GIT_SHA=${GITHUB_SHA}" --tag "astron-ci:${GITHUB_SHA}" .
+
+      - name: Build MongoDB container image
+        run: >-
+          docker build --target runtime-mongodb
+          --build-arg "ASTRON_GIT_SHA=${GITHUB_SHA}"
+          --tag "astron-mongodb-ci:${GITHUB_SHA}" .
+
+      - name: Sign in to GitHub Container Registry
+        if: github.event_name == 'push'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish container image
+        if: github.event_name == 'push'
+        run: |
+          repository="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${repository}"
+          docker tag "astron-ci:${GITHUB_SHA}" "${image}:${GITHUB_SHA}"
+          docker push "${image}:${GITHUB_SHA}"
+          docker tag "astron-mongodb-ci:${GITHUB_SHA}" "${image}:mongodb-${GITHUB_SHA}"
+          docker push "${image}:mongodb-${GITHUB_SHA}"
+
+          {
+            echo "Published test images:"
+            echo "- YAML/PostgreSQL runtime: \`${image}:${GITHUB_SHA}\`"
+            echo "- MongoDB runtime: \`${image}:mongodb-${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            docker tag "astron-ci:${GITHUB_SHA}" "${image}:${GITHUB_REF_NAME}"
+            docker push "${image}:${GITHUB_REF_NAME}"
+            docker tag "astron-mongodb-ci:${GITHUB_SHA}" "${image}:mongodb-${GITHUB_REF_NAME}"
+            docker push "${image}:mongodb-${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_REF_NAME}" == "main" || "${GITHUB_REF_NAME}" == "master" ]]; then
+            docker tag "astron-ci:${GITHUB_SHA}" "${image}:latest"
+            docker push "${image}:latest"
+            docker tag "astron-mongodb-ci:${GITHUB_SHA}" "${image}:mongodb-latest"
+            docker push "${image}:mongodb-latest"
+          fi
+
+  publish-binaries:
+    runs-on: ubuntu-24.04
+    needs: [windows-build, macos-tests, linux-tests, build]
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref_type == 'tag' || github.ref_name == github.event.repository.default_branch)
+    concurrency:
+      group: astron-binaries-${{ github.ref_type == 'tag' && github.ref_name || 'latest-main' }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: astron-*
+          path: packages
+          merge-multiple: true
+
+      - name: Publish versioned release assets
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          packages=(packages/*)
+          if [[ ${#packages[@]} -ne 3 ]]; then
+            echo "Expected three platform packages, found ${#packages[@]}" >&2
+            exit 1
+          fi
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${packages[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${packages[@]}" \
+              --verify-tag \
+              --title "Astron $GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          echo "Published platform packages: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish latest default-branch packages
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          packages=(packages/*)
+          if [[ ${#packages[@]} -ne 3 ]]; then
+            echo "Expected three platform packages, found ${#packages[@]}" >&2
+            exit 1
+          fi
+
+          # Keep this rolling prerelease mutable so the latest main packages
+          # remain downloadable after Actions artifact retention expires.
+          tag_ref="repos/${GITHUB_REPOSITORY}/git/ref/tags/latest-main"
+          if gh api "$tag_ref" >/dev/null 2>&1; then
+            gh api --method PATCH "$tag_ref" -f "sha=$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref=refs/tags/latest-main \
+              -f "sha=$GITHUB_SHA" >/dev/null
+          fi
+
+          notes="Latest successful default-branch packages from commit $GITHUB_SHA."
+          if gh release view latest-main >/dev/null 2>&1; then
+            gh release upload latest-main "${packages[@]}" --clobber
+            gh release edit latest-main \
+              --title "Latest successful default-branch build" \
+              --notes "$notes" \
+              --prerelease
+          else
+            gh release create latest-main "${packages[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "Latest successful default-branch build" \
+              --notes "$notes" \
+              --prerelease
+          fi
+          echo "Updated rolling platform packages: https://github.com/${GITHUB_REPOSITORY}/releases/tag/latest-main" \
+            >> "$GITHUB_STEP_SUMMARY"

@@ -1,472 +1,392 @@
-cmake_minimum_required(VERSION 3.1 FATAL_ERROR)
-set(CMAKE_CXX_STANDARD 14)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-project(Astron)
+cmake_minimum_required(VERSION 3.18)
 
-find_package(PythonLibs)
-find_package(PythonInterp)
-if(PYTHONINTERP_FOUND)
-	enable_testing()
-	if(PYTHON_VERSION_MAJOR EQUAL 2)
-		set(PYTHON2_EXECUTABLE "${PYTHON_EXECUTABLE}")
-	else()
-		set(PYTHON2_EXECUTABLE python2)
-	endif()
+project(Astron LANGUAGES C CXX)
+
+include(GNUInstallDirs)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type")
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS RelWithDebInfo Release Debug)
 endif()
 
-### Configure CMake to use our extra Find modules ###
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/modules/")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")
 
-
-### Define extra windows defines ###
 if(WIN32)
-	add_definitions(-DWIN32_LEAN_AND_MEAN)
-
-	add_definitions(-D_WIN32_WINDOWS)
-	add_definitions(-D_WIN32_WINNT=0x0600)
-	add_definitions(-DNOMINMAX) # min() and max() macros conflict with <limits>
-	add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-	add_definitions(-D_WINSOCK_DEPRECATED_NO_WARNINGS)
-	if(MSVC)
-		add_definitions("/wd4267") # 64-bit size_t complaints
-	endif()
+    set(ASTRON_REGENERATE_DC_PARSER_DEFAULT OFF)
 else()
-	option(STATIC_ASTRON "Builds a self-contained Astron binary (Non-Win32 only)" OFF)
+    set(ASTRON_REGENERATE_DC_PARSER_DEFAULT ON)
+endif()
+option(ASTRON_REGENERATE_DC_PARSER "Regenerate the DC parser with Flex and Bison in the build directory" ${ASTRON_REGENERATE_DC_PARSER_DEFAULT})
+option(ASTRON_ENABLE_INTEGRATION_TESTS "Register the Python integration tests with CTest" OFF)
+option(STATIC_ASTRON "Attempt to statically link Astron (experimental)" OFF)
+option(USE_32BIT_DATAGRAMS "Use 32-bit datagram and dclass size tags" OFF)
+option(USE_128BIT_CHANNELS "Use 128-bit channels and 64-bit doids/zones" OFF)
+option(BUILD_TESTS "Compile the internal C++ daemon tests" OFF)
+
+option(BUILD_DBSERVER "Build the Database Server" ON)
+option(BUILD_DB_YAML "Build the YAML database backend" ON)
+option(BUILD_DB_POSTGRESQL "Build the PostgreSQL database backend" OFF)
+option(BUILD_DB_MYSQL "Build the MySQL database backend" OFF)
+option(BUILD_DB_SQLITE "Build the SQLite database backend" OFF)
+option(BUILD_DB_MONGO "Build the MongoDB database backend" OFF)
+option(BUILD_STATESERVER "Build the State Server" ON)
+option(BUILD_STATESERVER_DBSS "Build Database-State Server support" ON)
+option(BUILD_EVENTLOGGER "Build the Event Logger" ON)
+option(BUILD_CLIENTAGENT "Build the Client Agent" ON)
+
+if(NOT BUILD_DBSERVER)
+    set(BUILD_DB_YAML OFF)
+    set(BUILD_DB_POSTGRESQL OFF)
+    set(BUILD_DB_MYSQL OFF)
+    set(BUILD_DB_SQLITE OFF)
+    set(BUILD_DB_MONGO OFF)
 endif()
 
 if(STATIC_ASTRON)
-	# !!! DO NOT SET THIS UNLESS YOU KNOW WHAT YOU'RE DOING !!!
-	# Static Astron builds are still *very* experimental, and there are still issues with linking the C++ Mongo driver in some instances.
-	set(CMAKE_EXE_LINK_DYNAMIC_C_FLAGS)
-	set(CMAKE_EXE_LINK_DYNAMIC_CXX_FLAGS)
-	set(CMAKE_SHARED_LIBRARY_C_FLAGS)
-	set(CMAKE_SHARED_LIBRARY_CXX_FLAGS)
-	set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS)
-	set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS)
-	set(CMAKE_FIND_LIBRARY_SUFFIXES ".a")
-	set(CMAKE_EXE_LINKER_FLAGS "-static")
+    message(FATAL_ERROR "STATIC_ASTRON is not supported by the current dependency set")
 endif()
 
-### Set build type to Release with Debug Info by default ###
-if(NOT CMAKE_BUILD_TYPE)
-	set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type.")
-endif()
-set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
-	RelWithDebInfo Release Debug)
-
-### Define astron’s git aha for use in program ###
-if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
-	find_package(Git)
-	if(GIT_FOUND)
-		exec_program(
-			"${GIT_EXECUTABLE}"
-			"${CMAKE_CURRENT_SOURCE_DIR}"
-			ARGS "describe --abbrev=8 --dirty --always"
-			OUTPUT_VARIABLE GIT_SHA_VERSION
-		)
-
-		add_definitions(-DGIT_SHA1="${GIT_SHA_VERSION}")
-	endif()
+if(ASTRON_ENABLE_INTEGRATION_TESTS)
+    find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+    enable_testing()
 endif()
 
-
-### Add per-compiler flags ###
-# Common flags:
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR
-   CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Werror -Wno-error=deprecated-declarations")
-endif()
-
-# Clang-specific flags:
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=deprecated-register")
-endif()
-
-### Debug Flags -- compile in spam/debug log messages ###
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DASTRON_DEBUG_MESSAGES")
-
-
-### OS Specific Settings ###
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")	### Windows requires winsock
-	list(APPEND EXTRA_LIBS wsock32 ws2_32)
-endif()
-
-if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")		### Linux requires pthreads
-	list(APPEND EXTRA_LIBS pthread rt)
-endif()
-
-### YAML Depedency -- required by config, used by yaml database ###
-set(YAMLCPP_USE_STATIC_LIBS ON CACHE BOOL "If true, will try to find static YamlCpp first instead of dynamic.")
-find_package(YamlCpp REQUIRED)
-include_directories(${YAMLCPP_INCLUDE_DIR})
-link_directories(${YAMLCPP_LIBRARY_DIR})
-message(STATUS "Found the following YamlCpp library:")
-message("  ${YAMLCPP_LIBRARY}\n")
-
-set(BUILD_YAML ON) # ON CACHE BOOL "Stuff"
-if(BUILD_YAML)
-	add_definitions(-DASTRON_WITH_YAML)
-endif()
-
-# libuv dependency -- required by networking
-find_package(libuv REQUIRED)
-include_directories(${LIBUV_INCLUDE_DIR})
-link_directories(${LIBUV_LIBRARY_DIR})
-message(STATUS "Found the libuv library:")
-message("	${LIBUV_LIBRARY}\n")
-
-# We only really need this for Boost's ICL at this point, but until it's fully deprecated:
 find_package(Boost REQUIRED)
-include_directories(${Boost_INCLUDE_DIR})
+find_package(yaml-cpp CONFIG REQUIRED)
+find_package(libuv REQUIRED)
+find_package(Threads REQUIRED)
 
-set(USE_32BIT_DATAGRAMS OFF CACHE BOOL
-	"If on, datagrams and dclass fields will use 32-bit length tags instead of 16-bit.")
-if(USE_32BIT_DATAGRAMS)
-	add_definitions(-DASTRON_32BIT_DATAGRAMS)
-	add_definitions(-DDCLASS_32BIT_SIZETAG)
-endif()
-set(USE_128BIT_CHANNELS OFF CACHE BOOL
-	"If on, channels will be 128-bit and doids and zones will be 64-bit (instead of 64/32).")
-if(USE_128BIT_CHANNELS)
-	add_definitions(-DASTRON_128BIT_CHANNELS)
-endif()
-
-set(BUILD_TESTS OFF CACHE BOOL "If set to true, test files will be compiled in")
-if(BUILD_TESTS)
-	set(TEST_FILES
-		src/tests/MDParticipantTest.cpp
-		src/tests/MDPerformanceTest.cpp
-	)
-endif()
-
-# DB backends can add libraries here as needed:
-set(DB_LIBRARY_NAMES)
-
-set(BUILD_DBSERVER ON CACHE BOOL "If on, Database Server will be built into binary")
-if(BUILD_DBSERVER)
-	add_definitions(-DBUILD_DBSERVER)
-	set(DBSERVER_FILES
-		src/database/DatabaseServer.h
-		src/database/DatabaseServer.cpp
-		src/database/DatabaseBackend.h
-		src/database/DatabaseBackend.cpp
-		src/database/DBOperation.h
-		src/database/DBOperation.cpp
-		src/database/DBOperationQueue.h
-		src/database/DBOperationQueue.cpp
-		src/database/OldDatabaseBackend.h
-		src/database/OldDatabaseBackend.cpp
-		src/database/DBBackendFactory.h
-		src/database/DBBackendFactory.cpp
-	)
-
-	set(BUILD_DB_YAML ON CACHE BOOL "If on, will support a YAML-based database (for development)")
-	if(BUILD_DB_YAML)
-		add_definitions(-DBUILD_DB_YAML)
-		set(DBSERVER_FILES
-			${DBSERVER_FILES}
-			src/database/YAMLDatabase.cpp
-		)
-		add_test(db_yaml "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_dbserver_yaml.py")
-		add_test(validate_config_dbyaml "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_dbyaml.py")
-		set(PYTHON_TESTS ${PYTHON_TESTS} db_yaml validate_config_dbyaml)
-	endif()
-
-	### Check for the presence of the MongoDB client library ###
-	find_package(libmongocxx QUIET)
-	find_package(libbsoncxx QUIET)
-	find_package(libmongocxx-static QUIET)
-	find_package(libbsoncxx-static QUIET)
-
-	if(LIBMONGOCXX_LIBRARIES OR LIBMONGOCXX_STATIC_LIBRARIES)
-		set(BUILD_DB_MONGO ON CACHE BOOL "If on, will support MongoDB.")
-		message(STATUS "MongoDB client library found")
-	else()
-		unset(BUILD_DB_MONGO CACHE)
-		message(STATUS "MongoDB client library not found")
-	endif()
-	if(BUILD_DB_MONGO)
-		list(APPEND DBSERVER_FILES
-			src/database/MongoDatabase.cpp)
-		if(LIBMONGOCXX_LIBRARIES)
-			include_directories(${LIBMONGOCXX_INCLUDE_DIRS} ${LIBBSONCXX_INCLUDE_DIRS})
-			link_directories(${LIBMONGOCXX_LIBRARY_DIRS} ${LIBBSONCXX_LIBRARY_DIRS})
-			list(APPEND DB_LIBRARY_NAMES ${LIBMONGOCXX_LIBRARIES} ${LIBBSONCXX_LIBRARIES})
-		elseif(LIBMONGOCXX_STATIC_LIBRARIES)
-			include_directories(${LIBMONGOCXX_STATIC_INCLUDE_DIRS} ${LIBBSONCXX_STATIC_INCLUDE_DIRS})
-			link_directories(${LIBMONGOCXX_STATIC_LIBRARY_DIRS} ${LIBBSONCXX_STATIC_LIBRARY_DIRS})
-			list(APPEND DB_LIBRARY_NAMES ${LIBMONGOCXX_STATIC_LIBRARIES} ${LIBBSONCXX_STATIC_LIBRARIES})
-		else()
-			message(FATAL_ERROR "BUILD_DB_MONGO is set but no libraries were found, this is never supposed to happen!")	
-		endif()
-		add_test(db_mongo "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_dbserver_mongodb.py")
-		add_test(validate_config_dbmongo "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_dbmongo.py")
-		# TODO: Config validation test
-		list(APPEND PYTHON_TESTS db_mongo)
-	endif()
-
-	### Check for soci and if available, compile SQL database support ###
-	find_package(Soci COMPONENTS postgresql mysql sqlite3)
-
-	if(SOCI_FOUND)
-		message(STATUS "Found the following Soci library:")
-		message("  ${SOCI_LIBRARY}\n")
-
-		message(STATUS "Found the following Soci plugins:")
-		### PostgreSQL support ##
-		if(SOCI_postgresql_FOUND)
-			set(BUILD_DB_POSTGRESQL ON CACHE BOOL "If on, will support PostgreSQL.")
-			message(STATUS "  PostgreSQL found")
-			message("	 ${SOCI_postgresql_PLUGIN}")
-		else()
-			unset(BUILD_DB_POSTGRESQL CACHE)
-			message(STATUS "  PostgreSQL not found")
-			message("	 won't add PostgreSQl support")
-		endif()
-
-		### MySQL support ###
-		if(SOCI_mysql_FOUND)
-			set(BUILD_DB_MYSQL ON CACHE BOOL "If on, will support MySQL.")
-			message(STATUS "  MySQL found")
-			message("	 ${SOCI_mysql_PLUGIN}")
-		else()
-			unset(BUILD_DB_MYSQL CACHE)
-			message(STATUS "  MySQL not found")
-			message("	 won't add MySQL support")
-		endif()
-
-		### SQLite3 support ###
-		if(SOCI_sqlite3_FOUND)
-			set(BUILD_DB_SQLITE ON CACHE BOOL "If on, will support SQLite3.")
-			message(STATUS "  SQLite3 found")
-			message("	 ${SOCI_sqlite3_PLUGIN}")
-		else()
-			unset(BUILD_DB_SQLITE CACHE)
-			message(STATUS "  SQLite3 not found")
-			message("	 won't add SQLite3 support")
-		endif()
-
-		message("")
-
-		### Add files to compiler and linker ###
-		if(BUILD_DB_SQLITE OR BUILD_DB_MYSQL OR BUILD_DB_POSTGRESQL)
-			add_definitions(-DBUILD_DB_SQL)
-			include_directories(${SOCI_INCLUDE_DIRS})
-			link_directories(${SOCI_LIBRARY_DIR})
-			set(DBSERVER_FILES
-				${DBSERVER_FILES}
-				src/database/SociSQLDatabase.cpp
-			)
-
-			list(APPEND DB_LIBRARY_NAMES soci_core dl)
-			if(BUILD_DB_POSTGRESQL)
-				list(APPEND DB_LIBRARY_NAMES pq)
-				add_test(db_pgsql 
-					"${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_dbserver_postgres.py")
-				add_test(validate_config_dbpostgres
-					"${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_dbpostgres.py")
-				set(PYTHON_TESTS ${PYTHON_TESTS} db_pgsql validate_config_dbpostgres)
-			endif()
-		endif()
-	else()
-		message(STATUS "Soci not found")
-		message("  won't add SQL support")
-		unset(BUILD_DB_MYSQL CACHE)
-		unset(BUILD_DB_POSTGRESQL CACHE)
-		unset(BUILD_DB_SQLITE CACHE)
-	endif()
+if(TARGET yaml-cpp::yaml-cpp)
+    set(ASTRON_YAML_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+    set(ASTRON_YAML_TARGET yaml-cpp)
 else()
-	unset(BUILD_DB_FILESYSTEM CACHE)
-	unset(BUILD_DB_YAML CACHE)
-	unset(BUILD_DB_MYSQL CACHE)
-	unset(BUILD_DB_POSTGRESQL CACHE)
-	unset(BUILD_DB_SQLITE CACHE)
-	unset(BUILD_DB_MONGO CACHE)
+    message(FATAL_ERROR "yaml-cpp was found, but it did not export a supported CMake target")
 endif()
 
-set(BUILD_STATESERVER ON CACHE BOOL "If on, State Server will be built into binary")
-if(BUILD_STATESERVER)
-	set(STATESERVER_FILES
-		src/stateserver/StateServer.cpp
-		src/stateserver/StateServer.h
-		src/stateserver/DistributedObject.cpp
-		src/stateserver/DistributedObject.h
-	)
-	add_test(stateserver "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_stateserver.py")
-	add_test(validate_config_stateserver "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_stateserver.py")
-	set(PYTHON_TESTS ${PYTHON_TESTS} stateserver validate_config_stateserver)
-
-	set(BUILD_STATESERVER_DBSS ON CACHE BOOL "If on, the Database-State Server will be built into binary")
-	if(BUILD_STATESERVER_DBSS)
-		set(STATESERVER_FILES
-			${STATESERVER_FILES}
-			src/stateserver/DBStateServer.h
-			src/stateserver/DBStateServer.cpp
-			src/stateserver/LoadingObject.h
-			src/stateserver/LoadingObject.cpp
-		)
-		add_test(dbss "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_dbss.py")
-		add_test(validate_config_dbss "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_dbss.py")
-		set(PYTHON_TESTS ${PYTHON_TESTS} dbss validate_config_dbss)
-	endif()
-else()
-	unset(BUILD_STATESERVER_DBSS CACHE)
+if(ASTRON_REGENERATE_DC_PARSER)
+    find_package(BISON 3.0 REQUIRED)
+    find_package(FLEX 2.6 REQUIRED)
 endif()
 
-set(BUILD_EVENTLOGGER ON CACHE BOOL "If on, Event Logger will be built into binary")
-if(BUILD_EVENTLOGGER)
-	set(EVENTLOGGER_FILES
-		src/eventlogger/EventLogger.cpp
-		src/eventlogger/EventLogger.h
-	)
-	add_test(eventlogger "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_eventlogger.py")
-	add_test(validate_config_eventlogger "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_eventlogger.py")
-endif()
-
-set(BUILD_CLIENTAGENT ON CACHE BOOL "If on, Client Agent will be built into binary")
-if(BUILD_CLIENTAGENT)
-	set(CLIENTAGENT_FILES
-		src/clientagent/Client.h
-		src/clientagent/Client.cpp
-		src/clientagent/ClientAgent.h
-		src/clientagent/ClientAgent.cpp
-		src/clientagent/ClientMessages.h
-		src/clientagent/ClientFactory.cpp
-		src/clientagent/ClientFactory.h
-		src/clientagent/AstronClient.cpp
-	)
-	add_test(clientagent "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_clientagent.py")
-	add_test(validate_config_clientagent "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config_clientagent.py")
-	set(PYTHON_TESTS ${PYTHON_TESTS} clientagent validate_config_clientagent)
-endif()
-
-### Define core components ###
 set(CORE_FILES
-	src/core/global.h
-	src/core/global.cpp
-	src/core/main.cpp
-	src/core/Logger.h
-	src/core/Logger.cpp
-	src/core/Role.h
-	src/core/Role.cpp
-	src/core/RoleFactory.h
-	src/core/RoleFactory.cpp
-	src/core/shutdown.h
-	src/core/shutdown.cpp
-	src/core/types.h
-	src/core/msgtypes.h
+    src/core/global.h
+    src/core/global.cpp
+    src/core/main.cpp
+    src/core/Logger.h
+    src/core/Logger.cpp
+    src/core/Role.h
+    src/core/Role.cpp
+    src/core/RoleFactory.h
+    src/core/RoleFactory.cpp
+    src/core/shutdown.h
+    src/core/shutdown.cpp
+    src/core/types.h
+    src/core/msgtypes.h
 )
 
 set(CONFIG_FILES
-	src/config/ConfigGroup.h
-	src/config/ConfigGroup.cpp
-	src/config/ConfigVariable.h
-	src/config/ConfigVariable.cpp
-	src/config/constraints.cpp
+    src/config/ConfigGroup.h
+    src/config/ConfigGroup.cpp
+    src/config/ConfigVariable.h
+    src/config/ConfigVariable.cpp
+    src/config/constraints.cpp
 )
 
 set(MESSAGEDIRECTOR_FILES
-	src/messagedirector/ChannelMap.cpp
-	src/messagedirector/ChannelMap.h
-	src/messagedirector/MessageDirector.cpp
-	src/messagedirector/MessageDirector.h
-	src/messagedirector/MDNetworkParticipant.cpp
-	src/messagedirector/MDNetworkParticipant.h
-	src/messagedirector/MDNetworkUpstream.cpp
-	src/messagedirector/MDNetworkUpstream.h
+    src/messagedirector/ChannelMap.cpp
+    src/messagedirector/ChannelMap.h
+    src/messagedirector/MessageDirector.cpp
+    src/messagedirector/MessageDirector.h
+    src/messagedirector/MDNetworkParticipant.cpp
+    src/messagedirector/MDNetworkParticipant.h
+    src/messagedirector/MDNetworkUpstream.cpp
+    src/messagedirector/MDNetworkUpstream.h
 )
 
 set(UTIL_FILES
-	src/util/Datagram.h
-	src/util/DatagramIterator.h
-	src/util/EventSender.cpp
-	src/util/EventSender.h
-	src/util/Timeout.cpp
-	src/util/Timeout.h
-	src/util/TaskQueue.cpp
-	src/util/TaskQueue.h
+    src/util/Datagram.h
+    src/util/DatagramIterator.h
+    src/util/EventSender.cpp
+    src/util/EventSender.h
+    src/util/Timeout.cpp
+    src/util/Timeout.h
+    src/util/TaskQueue.cpp
+    src/util/TaskQueue.h
 )
 
 set(NET_FILES
-	src/net/address_utils.cpp
-	src/net/address_utils.h
-	src/net/HAProxyHandler.cpp
-	src/net/HAProxyHandler.h
-	src/net/NetworkAcceptor.cpp
-	src/net/NetworkAcceptor.h
-	src/net/NetworkClient.cpp
-	src/net/NetworkClient.h
-	src/net/NetworkConnector.cpp
-	src/net/NetworkConnector.h
-	src/net/TcpAcceptor.cpp
-	src/net/TcpAcceptor.h
+    src/net/address_utils.cpp
+    src/net/address_utils.h
+    src/net/HAProxyHandler.cpp
+    src/net/HAProxyHandler.h
+    src/net/NetworkAcceptor.cpp
+    src/net/NetworkAcceptor.h
+    src/net/NetworkClient.cpp
+    src/net/NetworkClient.h
+    src/net/NetworkConnector.cpp
+    src/net/NetworkConnector.h
+    src/net/TcpAcceptor.cpp
+    src/net/TcpAcceptor.h
 )
 
-include_directories(src)
-add_test(validate_config_core "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_config.py")
-add_test(messagedirector "${PYTHON2_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/test/test_messagedirector.py")
-set(PYTHON_TESTS ${PYTHON_TESTS} messagedirector)
-add_executable(astrond
-	${CORE_FILES}
-	${CONFIG_FILES}
-	${MESSAGEDIRECTOR_FILES}
-	${UTIL_FILES}
-	${NET_FILES}
-	${STATESERVER_FILES}
-	${EVENTLOGGER_FILES}
-	${CLIENTAGENT_FILES}
-	${TEST_FILES}
-	${DBSERVER_FILES}
+set(ASTRON_SOURCES
+    ${CORE_FILES}
+    ${CONFIG_FILES}
+    ${MESSAGEDIRECTOR_FILES}
+    ${UTIL_FILES}
+    ${NET_FILES}
 )
+set(ASTRON_DB_LIBRARIES)
 
-### Setup source groups and defines for configurables ###
-source_group("Core" FILES ${CORE_FILES})
-source_group("Config" FILES ${CONFIG_FILES})
-source_group("Util" FILES ${UTIL_FILES})
-source_group("MessageDirector" FILES ${MESSAGEDIRECTOR_FILES})
-source_group("Net" FILES ${NET_FILES})
-if(STATESERVER_FILES)
-	add_definitions(-DBUILD_STATESERVER)
-	source_group("StateServer" FILES ${STATESERVER_FILES})
-endif()
-if(EVENTLOGGER_FILES)
-	add_definitions(-DBUILD_EVENTLOGGER)
-	source_group("EventLogger" FILES ${EVENTLOGGER_FILES})
-endif()
-if(CLIENTAGENT_FILES)
-	add_definitions(-DBUILD_CLIENTAGENT)
-	source_group("ClientAgent" FILES ${CLIENTAGENT_FILES})
-endif()
-if(DBSERVER_FILES)
-	add_definitions(-DBUILD_STATESERVER_DBSS)
-	source_group("DatabaseServer" FILES ${DBSERVER_FILES})
-endif()
-if(TEST_FILES)
-	source_group("DaemonTests" FILES ${TEST_FILES})
+if(BUILD_DBSERVER)
+    list(APPEND ASTRON_SOURCES
+        src/database/DatabaseServer.h
+        src/database/DatabaseServer.cpp
+        src/database/DatabaseBackend.h
+        src/database/DatabaseBackend.cpp
+        src/database/DBOperation.h
+        src/database/DBOperation.cpp
+        src/database/DBOperationQueue.h
+        src/database/DBOperationQueue.cpp
+        src/database/OldDatabaseBackend.h
+        src/database/OldDatabaseBackend.cpp
+        src/database/DBBackendFactory.h
+        src/database/DBBackendFactory.cpp
+    )
+
+    if(BUILD_DB_YAML)
+        list(APPEND ASTRON_SOURCES src/database/YAMLDatabase.cpp)
+    endif()
+
+    if(BUILD_DB_MONGO)
+        find_package(mongocxx 4.4 CONFIG REQUIRED)
+
+        if(TARGET mongo::mongocxx_shared AND TARGET mongo::bsoncxx_shared)
+            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_shared mongo::bsoncxx_shared)
+        elseif(TARGET mongo::mongocxx_static AND TARGET mongo::bsoncxx_static)
+            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_static mongo::bsoncxx_static)
+        else()
+            message(FATAL_ERROR "MongoDB C++ driver was found, but it did not export supported CMake targets")
+        endif()
+
+        list(APPEND ASTRON_SOURCES src/database/MongoDatabase.cpp)
+    endif()
+
+    if(BUILD_DB_POSTGRESQL OR BUILD_DB_MYSQL OR BUILD_DB_SQLITE)
+        find_package(SOCI 4 REQUIRED)
+        if(NOT TARGET SOCI::SOCI)
+            message(FATAL_ERROR "SOCI was found but did not export SOCI::SOCI")
+        endif()
+        list(APPEND ASTRON_DB_LIBRARIES SOCI::SOCI ${CMAKE_DL_LIBS})
+        list(APPEND ASTRON_SOURCES src/database/SociSQLDatabase.cpp)
+    endif()
+
+    if(BUILD_DB_POSTGRESQL)
+        find_package(PostgreSQL REQUIRED)
+        find_library(SOCI_POSTGRESQL_PLUGIN NAMES soci_postgresql REQUIRED)
+        list(APPEND ASTRON_DB_LIBRARIES PostgreSQL::PostgreSQL "${SOCI_POSTGRESQL_PLUGIN}")
+    endif()
+
+    if(BUILD_DB_MYSQL)
+        find_library(SOCI_MYSQL_PLUGIN NAMES soci_mysql REQUIRED)
+        list(APPEND ASTRON_DB_LIBRARIES "${SOCI_MYSQL_PLUGIN}")
+    endif()
+
+    if(BUILD_DB_SQLITE)
+        find_library(SOCI_SQLITE3_PLUGIN NAMES soci_sqlite3 REQUIRED)
+        list(APPEND ASTRON_DB_LIBRARIES "${SOCI_SQLITE3_PLUGIN}")
+    endif()
 endif()
 
-### Header source group ###
-#foreach(sourcefile IN LISTS ASTROND_SOURCES)
-#	if(sourcefile MATCHES .*\\.h)
-#		set(ASTROND_HEADERS "${ASTROND_HEADERS} ${sourcefile}")
-#	endif()
-#endforeach(sourcefile)
-#source_group("Header Files" FILES ${ASTROND_HEADERS})
+if(BUILD_STATESERVER)
+    list(APPEND ASTRON_SOURCES
+        src/stateserver/StateServer.cpp
+        src/stateserver/StateServer.h
+        src/stateserver/DistributedObject.cpp
+        src/stateserver/DistributedObject.h
+    )
+    if(BUILD_STATESERVER_DBSS)
+        list(APPEND ASTRON_SOURCES
+            src/stateserver/DBStateServer.cpp
+            src/stateserver/DBStateServer.h
+            src/stateserver/LoadingObject.cpp
+            src/stateserver/LoadingObject.h
+        )
+    endif()
+else()
+    set(BUILD_STATESERVER_DBSS OFF)
+endif()
+
+if(BUILD_EVENTLOGGER)
+    list(APPEND ASTRON_SOURCES
+        src/eventlogger/EventLogger.cpp
+        src/eventlogger/EventLogger.h
+    )
+endif()
+
+if(BUILD_CLIENTAGENT)
+    list(APPEND ASTRON_SOURCES
+        src/clientagent/Client.h
+        src/clientagent/Client.cpp
+        src/clientagent/ClientAgent.h
+        src/clientagent/ClientAgent.cpp
+        src/clientagent/ClientMessages.h
+        src/clientagent/ClientFactory.cpp
+        src/clientagent/ClientFactory.h
+        src/clientagent/AstronClient.cpp
+    )
+endif()
+
+if(BUILD_TESTS)
+    list(APPEND ASTRON_SOURCES
+        src/tests/MDParticipantTest.cpp
+        src/tests/MDPerformanceTest.cpp
+    )
+endif()
 
 add_subdirectory(src/dclass)
 
-add_dependencies(astrond dclass)
-target_link_libraries(astrond dclass ${YAMLCPP_LIBRARY} ${DB_LIBRARY_NAMES} ${LIBUV_LIBRARY} ${EXTRA_LIBS})
-install(TARGETS astrond DESTINATION bin)
+add_executable(astrond ${ASTRON_SOURCES})
+target_include_directories(astrond PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(astrond PRIVATE
+    dclass
+    "${ASTRON_YAML_TARGET}"
+    Boost::boost
+    libuv::libuv
+    Threads::Threads
+    ${ASTRON_DB_LIBRARIES}
+)
 
-### Handle some final testing configuration ###
+target_compile_definitions(astrond PRIVATE ASTRON_WITH_YAML)
+if(BUILD_DBSERVER)
+    target_compile_definitions(astrond PRIVATE BUILD_DBSERVER)
+endif()
+if(BUILD_DB_YAML)
+    target_compile_definitions(astrond PRIVATE BUILD_DB_YAML)
+endif()
+if(BUILD_DB_POSTGRESQL OR BUILD_DB_MYSQL OR BUILD_DB_SQLITE)
+    target_compile_definitions(astrond PRIVATE BUILD_DB_SQL)
+endif()
+if(BUILD_STATESERVER)
+    target_compile_definitions(astrond PRIVATE BUILD_STATESERVER)
+endif()
+if(BUILD_STATESERVER_DBSS)
+    target_compile_definitions(astrond PRIVATE BUILD_STATESERVER_DBSS)
+endif()
+if(BUILD_EVENTLOGGER)
+    target_compile_definitions(astrond PRIVATE BUILD_EVENTLOGGER)
+endif()
+if(BUILD_CLIENTAGENT)
+    target_compile_definitions(astrond PRIVATE BUILD_CLIENTAGENT)
+endif()
 if(USE_32BIT_DATAGRAMS)
-	set(PYTHON_TEST_ENV ${PYTHON_TEST_ENV} "USE_32BIT_DATAGRAMS=true")
+    target_compile_definitions(astrond PRIVATE ASTRON_32BIT_DATAGRAMS DCLASS_32BIT_SIZETAG)
 endif()
 if(USE_128BIT_CHANNELS)
-	set(PYTHON_TEST_ENV ${PYTHON_TEST_ENV} "USE_128BIT_CHANNELS=true")
+    target_compile_definitions(astrond PRIVATE ASTRON_128BIT_CHANNELS)
 endif()
-if(PYTHON_TEST_ENV)
-	set_tests_properties(${PYTHON_TESTS} PROPERTIES ENVIRONMENT "${PYTHON_TEST_ENV}")
+
+if(ASTRON_GIT_SHA)
+    set(GIT_SHA_VERSION "${ASTRON_GIT_SHA}")
+else()
+    find_package(Git QUIET)
+    if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" describe --abbrev=8 --dirty --always
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE GIT_SHA_VERSION
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+endif()
+if(GIT_SHA_VERSION)
+    target_compile_definitions(astrond PRIVATE "GIT_SHA1=\"${GIT_SHA_VERSION}\"")
+endif()
+
+target_compile_definitions(astrond PRIVATE "$<$<CONFIG:Debug>:ASTRON_DEBUG_MESSAGES>")
+
+if(MSVC)
+    target_compile_definitions(astrond PRIVATE WIN32_LEAN_AND_MEAN _WIN32_WINDOWS _WIN32_WINNT=0x0600 NOMINMAX _CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
+    target_link_libraries(astrond PRIVATE wsock32 ws2_32)
+    target_compile_options(astrond PRIVATE /W4)
+else()
+    target_compile_options(astrond PRIVATE -Wall -Wextra -Wno-error=deprecated-declarations)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(astrond PRIVATE -Wno-error=deprecated-register)
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_libraries(astrond PRIVATE rt)
+    endif()
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dclass PRIVATE -Wall -Wextra -Wno-error=deprecated-declarations)
+endif()
+target_compile_definitions(dclass PUBLIC ASTRON_WITH_YAML)
+if(USE_32BIT_DATAGRAMS)
+    target_compile_definitions(dclass PUBLIC ASTRON_32BIT_DATAGRAMS DCLASS_32BIT_SIZETAG)
+endif()
+if(USE_128BIT_CHANNELS)
+    target_compile_definitions(dclass PUBLIC ASTRON_128BIT_CHANNELS)
+endif()
+
+install(TARGETS astrond RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+if(ASTRON_ENABLE_INTEGRATION_TESTS)
+    set(ASTRON_PYTHON_TESTS)
+    function(astron_add_python_test name script)
+        add_test(NAME "${name}"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test/${script}")
+        set_tests_properties("${name}" PROPERTIES WORKING_DIRECTORY "$<TARGET_FILE_DIR:astrond>")
+        set(ASTRON_PYTHON_TESTS ${ASTRON_PYTHON_TESTS} "${name}" PARENT_SCOPE)
+    endfunction()
+
+    if(BUILD_DB_YAML)
+        astron_add_python_test(db_yaml test_dbserver_yaml.py)
+        astron_add_python_test(validate_config_dbyaml test_config_dbyaml.py)
+    endif()
+    if(BUILD_DB_MONGO)
+        astron_add_python_test(db_mongo test_dbserver_mongodb.py)
+        astron_add_python_test(validate_config_dbmongo test_config_dbmongo.py)
+    endif()
+    if(BUILD_DB_POSTGRESQL)
+        astron_add_python_test(db_postgresql test_dbserver_postgres.py)
+        astron_add_python_test(validate_config_dbpostgres test_config_dbpostgres.py)
+    endif()
+    if(BUILD_STATESERVER)
+        astron_add_python_test(stateserver test_stateserver.py)
+        astron_add_python_test(validate_config_stateserver test_config_stateserver.py)
+        if(BUILD_STATESERVER_DBSS)
+            astron_add_python_test(dbss test_dbss.py)
+            astron_add_python_test(validate_config_dbss test_config_dbss.py)
+        endif()
+    endif()
+    if(BUILD_EVENTLOGGER)
+        astron_add_python_test(eventlogger test_eventlogger.py)
+        astron_add_python_test(validate_config_eventlogger test_config_eventlogger.py)
+    endif()
+    if(BUILD_CLIENTAGENT)
+        astron_add_python_test(clientagent test_clientagent.py)
+        astron_add_python_test(validate_config_clientagent test_config_clientagent.py)
+    endif()
+    astron_add_python_test(validate_config_core test_config.py)
+    astron_add_python_test(messagedirector test_messagedirector.py)
+
+    set(ASTRON_TEST_ENV)
+    if(USE_32BIT_DATAGRAMS)
+        list(APPEND ASTRON_TEST_ENV "USE_32BIT_DATAGRAMS=true")
+    endif()
+    if(USE_128BIT_CHANNELS)
+        list(APPEND ASTRON_TEST_ENV "USE_128BIT_CHANNELS=true")
+    endif()
+    if(ASTRON_TEST_ENV)
+        set_tests_properties(${ASTRON_PYTHON_TESTS} PROPERTIES ENVIRONMENT "${ASTRON_TEST_ENV}")
+    endif()
 endif()

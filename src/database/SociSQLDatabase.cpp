@@ -9,7 +9,7 @@
 #include "dclass/dc/Class.h"
 #include "dclass/dc/Field.h"
 
-#include <soci.h>
+#include <soci/soci.h>
 #include <boost/icl/interval_set.hpp>
 
 using namespace std;
@@ -22,7 +22,7 @@ typedef boost::icl::interval_set<doid_t> set_t;
 static ConfigGroup soci_backend_config("soci", db_backend_config);
 static ConfigVariable<string> database_driver("driver", "mysql", soci_backend_config);
 static ConfigVariable<string> database_name("database", "", soci_backend_config);
-static ConfigVariable<string> database_address("address", "", soci_backend_config);
+static ConfigVariable<string> database_server("server", "", soci_backend_config);
 static ConfigVariable<string> database_username("username", "", soci_backend_config);
 static ConfigVariable<string> database_password("password", "", soci_backend_config);
 
@@ -33,6 +33,8 @@ class SociSQLDatabase : public OldDatabaseBackend
         OldDatabaseBackend(dbeconfig, min_id, max_id), m_min_id(min_id), m_max_id(max_id),
         m_backend(database_driver.get_rval(dbeconfig)),
         m_db_name(database_name.get_rval(dbeconfig)),
+        m_db_host(),
+        m_db_port(0),
         m_sess_user(database_username.get_rval(dbeconfig)),
         m_sess_passwd(database_password.get_rval(dbeconfig))
     {
@@ -40,14 +42,25 @@ class SociSQLDatabase : public OldDatabaseBackend
         log_name << "Database-" << m_backend << "(Range: [" << min_id << ", " << max_id << "])";
         m_log = new LogCategory(m_backend, log_name.str());
 
-        string server = database_address.get_rval(dbeconfig);
-        size_t col_index = server.find_last_of(":");
-        size_t sqr_index = server.find_last_of("]");
-        if(col_index != string::npos && col_index > sqr_index) {
-            m_db_host = server.substr(0, col_index);
-            m_db_port = stoi(server.substr(col_index + 1));
+        string server = database_server.get_rval(dbeconfig);
+        if(!server.empty() && server.front() == '[') {
+            size_t bracket_index = server.find(']');
+            if(bracket_index != string::npos) {
+                m_db_host = server.substr(1, bracket_index - 1);
+                if(bracket_index + 1 < server.size() && server[bracket_index + 1] == ':') {
+                    m_db_port = static_cast<uint16_t>(stoi(server.substr(bracket_index + 2)));
+                }
+            } else {
+                m_db_host = server;
+            }
         } else {
-            m_db_host = server;
+            size_t colon_index = server.find_last_of(":");
+            if(colon_index != string::npos && server.find_first_of(":") == colon_index) {
+                m_db_host = server.substr(0, colon_index);
+                m_db_port = static_cast<uint16_t>(stoi(server.substr(colon_index + 1)));
+            } else {
+                m_db_host = server;
+            }
         }
 
         connect();
@@ -83,6 +96,8 @@ class SociSQLDatabase : public OldDatabaseBackend
             m_sql.commit(); // End transaction
         } catch(const soci_error &e) {
             m_sql.rollback(); // Revert transaction
+            m_log->error() << "Failed to create object of class '" << dcc->get_name()
+                           << "': " << e.what() << endl;
             return 0;
         }
 
@@ -176,6 +191,8 @@ class SociSQLDatabase : public OldDatabaseBackend
                 set_fields_in_table(do_id, dcc, fields);
                 m_sql.commit(); // End transaction
             } catch(const soci_error &e) {
+                m_log->error() << "Failed to set field '" << field->get_name()
+                               << "' for object " << do_id << ": " << e.what() << endl;
                 m_sql.rollback(); // Revert transaction
             }
         }
@@ -232,8 +249,7 @@ class SociSQLDatabase : public OldDatabaseBackend
         }
 
         val = format_value(field->get_type(), value);
-        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-              << "='" << val << "' WHERE object_id=" << do_id << ";";
+        update_field(do_id, dcc, field, val);
         return true;
     }
     virtual bool set_fields_if_empty(doid_t do_id, FieldValues &values)
@@ -275,8 +291,7 @@ class SociSQLDatabase : public OldDatabaseBackend
                     }
 
                     value = format_value(it->first->get_type(), it->second);
-                    m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-                          << "='" << value << "' WHERE object_id=" << do_id << ";";
+                    update_field(do_id, dcc, field, value);
                 }
             }
 
@@ -333,8 +348,7 @@ class SociSQLDatabase : public OldDatabaseBackend
         }
 
         val = format_value(field->get_type(), value);
-        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-              << "='" << val << "' WHERE object_id=" << do_id << ";";
+        update_field(do_id, dcc, field, val);
         return true;
     }
     virtual bool set_fields_if_equals(doid_t do_id, const FieldValues &equals,
@@ -370,8 +384,7 @@ class SociSQLDatabase : public OldDatabaseBackend
                     string equal = format_value(field->get_type(), it->second);
                     if(value == equal) {
                         string insert = format_value(field->get_type(), values[field]);
-                        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-                              << "='" << insert << "' WHERE object_id=" << do_id << ";";
+                        update_field(do_id, dcc, field, insert);
                     } else {
                         failed = true;
                     }
@@ -449,6 +462,12 @@ class SociSQLDatabase : public OldDatabaseBackend
     }
 
   protected:
+    void update_field(doid_t id, const Class* dcc, const Field* field, const string &value)
+    {
+        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
+              << "=:value WHERE object_id=:id;", use(value), use(id);
+    }
+
     void connect()
     {
         // Prepare database, username, password, etc for connection
@@ -694,13 +713,11 @@ class SociSQLDatabase : public OldDatabaseBackend
     void set_fields_in_table(doid_t id, const Class* dcc,
                              const FieldValues &fields)
     {
-        string name, value;
+        string value;
         for(auto it = fields.begin(); it != fields.end(); ++it) {
             if(it->first->has_keyword("db")) {
-                name = it->first->get_name();
                 value = format_value(it->first->get_type(), it->second);
-                m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << name << "='" << value
-                      << "' WHERE object_id=" << id << ";";
+                update_field(id, dcc, it->first, value);
             }
         }
     }

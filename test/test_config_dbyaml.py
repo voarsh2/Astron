@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ConfigTest
 from common.dcfile import *
@@ -35,7 +35,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
     def test_dbyaml_reserved_control(self):
         config = """\
@@ -54,7 +54,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_yamldb_invalid_generate(self):
         config = """\
@@ -73,7 +73,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -91,7 +91,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_yamldb_reserved_generate(self):
         config = """\
@@ -110,7 +110,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -128,7 +128,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_yamldb_boolean_broadcast(self):
         config = """\
@@ -150,7 +150,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
         config = """\
             messagedirector:
@@ -171,7 +171,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yaml
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_yamldb_type_typo(self):
         config = """\
@@ -192,7 +192,7 @@ class TestConfigDBYaml(ConfigTest):
                     type: yam
                     directory: %r
             """ % (test_dc, self.yamldb_path)
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ConfigTest
 from common.dcfile import *
@@ -38,7 +38,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
     def test_postgres_reserved_control(self):
         config = """\
@@ -61,7 +61,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_postgres_invalid_generate(self):
         config = """\
@@ -83,7 +83,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -104,7 +104,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_postgres_reserved_generate(self):
         config = """\
@@ -126,7 +126,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -147,7 +147,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_postgres_boolean_broadcast(self):
         config = """\
@@ -172,7 +172,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
         config = """\
             messagedirector:
@@ -196,7 +196,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
         config = """\
             messagedirector:
@@ -220,7 +220,7 @@ class TestConfigDBPostgres(ConfigTest):
                     username: astron
                     database: astron
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 import unittest, subprocess, tempfile, os, threading
+import time
 from socket import socket, AF_INET, SOCK_STREAM, SOL_TCP, TCP_NODELAY
-from astron import *
+from common.astron import *
 
 class ConfigTest(unittest.TestCase):
     class ConfigRunner(object):
@@ -49,12 +50,29 @@ class ConfigTest(unittest.TestCase):
             os.remove(cls.config_path)
 
 class ProtocolTest(unittest.TestCase):
+    RESPONSE_TIMEOUT = 5
+
     @classmethod
     def connectToServer(cls, addr = '127.0.0.1', port = 57123):
         sock = socket(AF_INET, SOCK_STREAM)
         sock.setsockopt(SOL_TCP, TCP_NODELAY, 1)
         sock.connect((addr, port))
         return MDConnection(sock)
+
+    def recv_expected(self, conn):
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT
+        timeout = conn.s.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                conn.s.settimeout(remaining)
+                dg = conn.recv_maybe()
+                if dg is not None:
+                    return dg
+        finally:
+            conn.s.settimeout(timeout)
 
     def writeUnexpectedAndFail(self, received):
         testName = self.__class__.__name__
@@ -82,7 +100,7 @@ class ProtocolTest(unittest.TestCase):
         if isClient:
             expectedMsgtype = lhs.read_uint16()
             receivedMsgtype = rhs.read_uint16()
-            self.assertEquals(expectedMsgtype, receivedMsgtype)
+            self.assertEqual(expectedMsgtype, receivedMsgtype)
 
             if not received.equals(expected):
                 self.writeDatagramsAndFail(expected, received)
@@ -90,11 +108,11 @@ class ProtocolTest(unittest.TestCase):
         else:
             numChannelsExpected = lhs.read_uint8()
             numChannelsReceived = rhs.read_uint8()
-            self.assertEquals(numChannelsExpected, numChannelsReceived)
+            self.assertEqual(numChannelsExpected, numChannelsReceived)
 
             expectedRecipients = expected.get_channels()
             receivedRecipients = received.get_channels()
-            self.assertEquals(expectedRecipients, receivedRecipients)
+            self.assertEqual(expectedRecipients, receivedRecipients)
 
             lhs.seek(1 + CHANNEL_SIZE_BYTES * numChannelsExpected)
             rhs.seek(1 + CHANNEL_SIZE_BYTES * numChannelsReceived)
@@ -103,17 +121,17 @@ class ProtocolTest(unittest.TestCase):
                 # If we aren't a control datagram, check the sender
                 expectedSender = lhs.read_channel()
                 receivedSender = rhs.read_channel()
-                self.assertEquals(expectedSender, receivedSender)
+                self.assertEqual(expectedSender, receivedSender)
 
             expectedMsgtype = lhs.read_uint16()
             receivedMsgtype = rhs.read_uint16()
-            self.assertEquals(expectedMsgtype, receivedMsgtype)
+            self.assertEqual(expectedMsgtype, receivedMsgtype)
 
             if not received.matches(expected):
                 self.writeDatagramsAndFail(expected, received)
 
     def expect(self, conn, expected, isClient = False):
-        received = conn.recv_maybe()
+        received = self.recv_expected(conn)
         if received is None:
             self.fail("No datagram received.")
         self.assertDatagramsEqual(expected, received, isClient)
@@ -126,7 +144,7 @@ class ProtocolTest(unittest.TestCase):
         numMatch = 0
         numExpct = len(datagrams)
         while datagrams:
-            received = conn.recv_maybe()
+            received = self.recv_expected(conn)
             if received is None:
                 if numMatch == 0:
                     self.fail("Received %d datagrams, but expected %d." % (numRecvd, numExpct))
@@ -167,5 +185,17 @@ class ProtocolTest(unittest.TestCase):
 
     def expectNone(self, conn):
         received = conn.recv_maybe()
+        if received is not None:
+            self.writeUnexpectedAndFail(received)
+
+    def expectNoneFor(self, conn, duration):
+        """Assert that a connection stays quiet for a defined interval."""
+        timeout = conn.s.gettimeout()
+        try:
+            conn.s.settimeout(duration)
+            received = conn.recv_maybe()
+        finally:
+            conn.s.settimeout(timeout)
+
         if received is not None:
             self.writeUnexpectedAndFail(received)

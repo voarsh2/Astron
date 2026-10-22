@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest, time, ssl, struct
 from socket import socket, AF_INET, SOCK_STREAM, error as socket_error
 from common.unittests import ProtocolTest
@@ -82,6 +82,8 @@ roles:
 VERSION = 'Sword Art Online v5.1'
 
 class TestClientAgent(ProtocolTest):
+    next_sync_context = 0xCA000000
+
     @classmethod
     def setUpClass(cls):
         cls.daemon = Daemon(CONFIG)
@@ -96,23 +98,33 @@ class TestClientAgent(ProtocolTest):
         cls.daemon.stop()
 
     def assertDisconnect(self, s, reason_code):
-        while True:
-            dg = s.recv_maybe()
-            self.assertTrue(dg is not None, "No datagram received while expecting ClientEject")
-            dgi = DatagramIterator(dg)
-            if dgi.read_uint16() == CLIENT_EJECT:
-                self.assertEqual(dgi.read_uint16(), reason_code)
-                # According to client_protocol.md, the string must provide some explanation, so
-                # ensure that it is there.
-                self.assertNotEqual(dgi.read_string(), '')
-                s.close()
-                return
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT
+        timeout = s.s.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                self.assertGreater(remaining, 0, "Timed out waiting for ClientEject")
+                s.s.settimeout(remaining)
+                dg = s.recv_maybe()
+                self.assertTrue(dg is not None, "No datagram received while expecting ClientEject")
+                dgi = DatagramIterator(dg)
+                if dgi.read_uint16() == CLIENT_EJECT:
+                    self.assertEqual(dgi.read_uint16(), reason_code)
+                    # According to client_protocol.md, the string must provide some explanation, so
+                    # ensure that it is there.
+                    self.assertNotEqual(dgi.read_string(), '')
+                    break
+        finally:
+            s.s.settimeout(timeout)
+        s.close()
 
     def connect(self, do_hello=True, port=57128, tls_opts=None, proxy_header=None):
         s = socket(AF_INET, SOCK_STREAM)
         s.connect(('127.0.0.1', port))
         if proxy_header is not None:
-            s.send(proxy_header)
+            if isinstance(proxy_header, str):
+                proxy_header = proxy_header.encode('latin-1')
+            s.sendall(proxy_header)
         if tls_opts is not None:
             s = ssl.wrap_socket(s,**tls_opts)
 
@@ -154,10 +166,34 @@ class TestClientAgent(ProtocolTest):
         return sender_id
 
     def set_state(self, client, state):
-        dg = Datagram.create([self.identify(client, ignore_id = True)], 1, CLIENTAGENT_SET_STATE)
+        client_id = self.identify(client, ignore_id=True)
+        dg = Datagram.create([client_id], 1, CLIENTAGENT_SET_STATE)
         dg.add_uint16(state)
         self.server.send(dg)
-        time.sleep(0.1) # Mitigate race condition with set_state
+        self.synchronize_clientagent(client_id)
+
+    def synchronize_clientagent(self, client_id):
+        # A response from the ClientAgent fences earlier controls sent on this
+        # Message Director connection, including commands that have no reply.
+        context = self.__class__.next_sync_context
+        self.__class__.next_sync_context += 1
+
+        request = Datagram.create(
+            [client_id], 1234, CLIENTAGENT_GET_NETWORK_ADDRESS
+        )
+        request.add_uint32(context)
+        self.server.send(request)
+
+        response = self.recv_expected(self.server)
+        self.assertIsNotNone(
+            response, "ClientAgent did not answer the synchronization request."
+        )
+        dgi = DatagramIterator(response)
+        matches, reason = dgi.matches_header(
+            [1234], client_id, CLIENTAGENT_GET_NETWORK_ADDRESS_RESP
+        )
+        self.assertTrue(matches, reason)
+        self.assertEqual(dgi.read_uint32(), context)
 
     def test_hello(self):
         self.server.flush()
@@ -271,7 +307,7 @@ class TestClientAgent(ProtocolTest):
 
         # TODO: Rewrite this line to be less ugly.
         # Check that the connection closes with no other data.
-        self.assertEqual(client.s.recv(1024), '')
+        self.assertEqual(client.s.recv(1024), b'')
 
     def test_set_state(self):
         self.server.flush()
@@ -395,7 +431,7 @@ class TestClientAgent(ProtocolTest):
         self.server.flush()
 
         # Reidentify the client, make sure the sender has changed.
-        self.assertEquals(self.identify(client, ignore_id = True), 555566667777)
+        self.assertEqual(self.identify(client, ignore_id = True), 555566667777)
 
         # The client should have a subscription on the new sender channel automatically:
         dg = Datagram.create([555566667777], 1, STATESERVER_OBJECT_SET_FIELD)
@@ -571,9 +607,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([5679, 4321]))
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 2)
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([5679, 4321]))
 
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
         dg.add_uint32(context)
@@ -678,8 +714,8 @@ class TestClientAgent(ProtocolTest):
         dg = self.server.recv()
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([55446655], id, STATESERVER_OBJECT_SET_LOCATION))
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_zone(), 4321)
 
         dg = Datagram.create([(1234<<ZONE_SIZE_BITS)|4321], 55446655, STATESERVER_OBJECT_ENTER_LOCATION_WITH_REQUIRED_OTHER)
         dg.add_doid(55446655)
@@ -750,8 +786,8 @@ class TestClientAgent(ProtocolTest):
         dg = self.server.recv()
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([55446655], id, STATESERVER_OBJECT_SET_FIELD))
-        self.assertEquals(dgi.read_doid(), 55446655)
-        self.assertEquals(dgi.read_uint16(), requestKill)
+        self.assertEqual(dgi.read_doid(), 55446655)
+        self.assertEqual(dgi.read_uint16(), requestKill)
 
         # But ownsend is a no-no.
         dg = Datagram()
@@ -905,9 +941,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1)
-        self.assertEquals(dgi.read_zone(), 5679)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1)
+        self.assertEqual(dgi.read_zone(), 5679)
 
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
         dg.add_uint32(context)
@@ -992,8 +1028,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_string(pr3.get_data())
         self.server.send(dg)
 
-        #Wait
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client suddenly loses connection...!
         client.close()
@@ -1077,9 +1112,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # We now tell the CA that there are 2 objects in the zone
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -1179,6 +1214,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(1000) # Interest id
         dg.add_doid(1234) # Parent
         dg.add_zone(4321) # Zone
+        interest_started = time.monotonic()
         client.send(dg)
 
         # The same N.B. in test_interest applies here
@@ -1189,9 +1225,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # We now tell the CA that there are 2 objects in the zone
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -1215,10 +1251,11 @@ class TestClientAgent(ProtocolTest):
         # The CA should buffer the entry of 8888...
         self.expectNone(client)
 
-        # Now, nothing happens for 750 ms
-        time.sleep(0.75)
-
-        # Interest timeout (500ms) should've hit, so the interest should've been closed.
+        # The interest timeout is 500ms from the add request. Wait on the
+        # client socket for the remainder of that interval, then wait for the
+        # timeout's actual delivery below.
+        quiet_for = max(0, 0.45 - (time.monotonic() - interest_started))
+        self.expectNoneFor(client, quiet_for)
 
         # We should hear about 8888...
         dg = Datagram()
@@ -1264,9 +1301,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # Now, one of our objects enters prematurely
         dg = Datagram.create([id], 1, STATESERVER_OBJECT_ENTER_INTEREST_WITH_REQUIRED_OTHER)
@@ -1336,9 +1373,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # Now, one of our objects enters prematurely
         dg = Datagram.create([id], 1, STATESERVER_OBJECT_ENTER_LOCATION_WITH_REQUIRED)
@@ -1469,9 +1506,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # The StateServer would dispatch CHANGING_LOCATIONs first
         locations = [(1234<<ZONE_SIZE_BITS)|4321, (1235<<ZONE_SIZE_BITS)|6161]
@@ -1551,8 +1588,8 @@ class TestClientAgent(ProtocolTest):
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
         #ss_context = dgi.read_uint32()
-        #self.assertEquals(dgi.read_doid(), 1234)
-        #self.assertEquals(dgi.read_zone(), 4321)
+        #self.assertEqual(dgi.read_doid(), 1234)
+        #self.assertEqual(dgi.read_zone(), 4321)
 
         ## The SS replies immediately with the count:
         #dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONE_COUNT_RESP)
@@ -1566,9 +1603,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # In our first test, we'll open an interest containing no objects.
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -1615,9 +1652,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 2)
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
 
         # The SS replies immediately with the count:
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -1864,9 +1901,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id3, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 2)
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
 
         # The SS replies immediately with the count:
         dg = Datagram.create([id3], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -1948,9 +1985,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235) # Parent
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 111111) # Zone #1
+        self.assertEqual(dgi.read_doid(), 1235) # Parent
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 111111) # Zone #1
 
         # The SS replies immediately with the count:
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2068,10 +2105,10 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235) # Object doid
-        self.assertEquals(dgi.read_uint16(), 2) # Nume zones requested
+        self.assertEqual(dgi.read_doid(), 1235) # Object doid
+        self.assertEqual(dgi.read_uint16(), 2) # Nume zones requested
         dg.add_uint16(2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([1111, 2222]))
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([1111, 2222]))
 
         # There is one object:
         dg = Datagram.create([id], 1235, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2194,9 +2231,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235)
-        self.assertEquals(dgi.read_uint16(), 2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([1111, 2222]))
+        self.assertEqual(dgi.read_doid(), 1235)
+        self.assertEqual(dgi.read_uint16(), 2)
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([1111, 2222]))
 
         # There is one object:
         dg = Datagram.create([id], 1235, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2249,9 +2286,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235) # parent
-        self.assertEquals(dgi.read_uint16(), 1) # zone count
-        self.assertEquals(dgi.read_zone(), 5555) # zone #1
+        self.assertEqual(dgi.read_doid(), 1235) # parent
+        self.assertEqual(dgi.read_uint16(), 1) # zone count
+        self.assertEqual(dgi.read_zone(), 5555) # zone #1
 
         # We'll pretend 1235,5555 is empty, so:
         dg = Datagram.create([id], 1235, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2284,9 +2321,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235) # Parent
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 8888) # Zone #1
+        self.assertEqual(dgi.read_doid(), 1235) # Parent
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 8888) # Zone #1
 
         # We'll pretend there's something in there this time:
         dg = Datagram.create([id], 1235, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2344,9 +2381,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234) # Parent
-        self.assertEquals(dgi.read_uint16(), 1)  # Zone count
-        self.assertEquals(dgi.read_zone(), 1111) # Zone
+        self.assertEqual(dgi.read_doid(), 1234) # Parent
+        self.assertEqual(dgi.read_uint16(), 1)  # Zone count
+        self.assertEqual(dgi.read_zone(), 1111) # Zone
 
         # We'll pretend 1234,1111 is empty, so:
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2395,11 +2432,11 @@ class TestClientAgent(ProtocolTest):
         dg = client.recv_maybe()
         self.assertTrue(dg is not None, "No datagram received while expecting fowarded interest.")
         dgi = DatagramIterator(dg)
-        self.assertEquals(dgi.read_uint16(), CLIENT_ADD_INTEREST_MULTIPLE) # MsgType
+        self.assertEqual(dgi.read_uint16(), CLIENT_ADD_INTEREST_MULTIPLE) # MsgType
         cl_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_uint16(), 12) # Interest id
-        self.assertEquals(dgi.read_doid(), 1234) # Parent
-        self.assertEquals(dgi.read_uint16(), 2) # Zone count
+        self.assertEqual(dgi.read_uint16(), 12) # Interest id
+        self.assertEqual(dgi.read_doid(), 1234) # Parent
+        self.assertEqual(dgi.read_uint16(), 2) # Zone count
         # We don't actually care what order the zones are in
         zones = [5555, 4444]
         received_zone = dgi.read_zone()
@@ -2414,9 +2451,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 2)
-        self.assertEquals(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 2)
+        self.assertEqual(set([dgi.read_zone(), dgi.read_zone()]), set([5555, 4444]))
 
         # The SS replies immediately with the count:
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -2549,9 +2586,9 @@ class TestClientAgent(ProtocolTest):
         dg = client.recv_maybe()
         self.assertTrue(dg is not None, "No datagram received while expecting remove interest.")
         dgi = DatagramIterator(dg)
-        self.assertEquals(dgi.read_uint16(), CLIENT_REMOVE_INTEREST) # MsgType
+        self.assertEqual(dgi.read_uint16(), CLIENT_REMOVE_INTEREST) # MsgType
         cl_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_uint16(), 12) # Interest id
+        self.assertEqual(dgi.read_uint16(), 12) # Interest id
 
         # The remaining seen object should die...
         dg = Datagram()
@@ -2600,11 +2637,11 @@ class TestClientAgent(ProtocolTest):
         dg = client.recv_maybe()
         self.assertTrue(dg is not None, "No datagram received while expecting fowarded interest.")
         dgi = DatagramIterator(dg)
-        self.assertEquals(dgi.read_uint16(), CLIENT_ADD_INTEREST) # MsgType
+        self.assertEqual(dgi.read_uint16(), CLIENT_ADD_INTEREST) # MsgType
         cl_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_uint16(), 17) # Interest id
-        self.assertEquals(dgi.read_doid(), 1235) # Parent
-        self.assertEquals(dgi.read_zone(), 8888) # Zone
+        self.assertEqual(dgi.read_uint16(), 17) # Interest id
+        self.assertEqual(dgi.read_doid(), 1235) # Parent
+        self.assertEqual(dgi.read_zone(), 8888) # Zone
 
         # Server should ask for the objects:
         # N. B. This is not the current behavior of the ClientAgent, but its also not the point
@@ -2616,8 +2653,8 @@ class TestClientAgent(ProtocolTest):
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
         #ss_context = dgi.read_uint32()
-        #self.assertEquals(dgi.read_doid(), 2345)
-        #self.assertEquals(dgi.read_zone(), 8888)
+        #self.assertEqual(dgi.read_doid(), 2345)
+        #self.assertEqual(dgi.read_zone(), 8888)
 
         ## The SS replies immediately with the count:
         #dg = Datagram.create([id], 2345, STATESERVER_OBJECT_GET_ZONE_COUNT_RESP)
@@ -2631,9 +2668,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1235)
-        self.assertEquals(dgi.read_uint16(), 1)
-        self.assertEquals(dgi.read_zone(), 8888)
+        self.assertEqual(dgi.read_doid(), 1235)
+        self.assertEqual(dgi.read_uint16(), 1)
+        self.assertEqual(dgi.read_zone(), 8888)
         # The SS replies immediately with the count:
         dg = Datagram.create([id], 1235, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
         dg.add_uint32(ss_context)
@@ -2695,8 +2732,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and get disconnected because we're not authenticate
         dg = Datagram()
@@ -2720,8 +2756,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and everything should run fine
         dg = Datagram()
@@ -2743,8 +2778,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10000) # doid
         self.server.send(dg)
 
-        # Mitigate race condition with undeclare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and get disconnected because its not declared
         dg = Datagram()
@@ -2783,8 +2817,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(setBR1)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable and declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Try a SetField
         dg = Datagram()
@@ -2809,8 +2842,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(setRequired1)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Make sure setRequired1 is still sendable
         dg = Datagram()
@@ -2852,8 +2884,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(bar)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Try a SetField
         dg = Datagram()
@@ -2877,8 +2908,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(0) # num fields
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Trying to set the field should disconnect us then
         dg = Datagram()
@@ -3029,8 +3059,8 @@ class TestClientAgent(ProtocolTest):
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
         #ss_context = dgi.read_uint32()
-        #self.assertEquals(dgi.read_doid(), 1234)
-        #self.assertEquals(dgi.read_zone(), 4321)
+        #self.assertEqual(dgi.read_doid(), 1234)
+        #self.assertEqual(dgi.read_zone(), 4321)
 
         ## The SS replies immediately with the count:
         #dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONE_COUNT_RESP)
@@ -3044,9 +3074,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # The interest contains our object
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -3111,8 +3141,8 @@ class TestClientAgent(ProtocolTest):
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
         #ss_context = dgi.read_uint32()
-        #self.assertEquals(dgi.read_doid(), 1234)
-        #self.assertEquals(dgi.read_zone(), 4321)
+        #self.assertEqual(dgi.read_doid(), 1234)
+        #self.assertEqual(dgi.read_zone(), 4321)
 
         ## The SS replies immediately with the count:
         #dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONE_COUNT_RESP)
@@ -3126,9 +3156,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         ss_context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1) # Zone count
-        self.assertEquals(dgi.read_zone(), 4321)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1) # Zone count
+        self.assertEqual(dgi.read_zone(), 4321)
 
         # The interest contains our object
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
@@ -3148,9 +3178,6 @@ class TestClientAgent(ProtocolTest):
 
         # Ignore the enter location and done interest response.
         client.flush()
-
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
 
         # Then change the object's location, out of interest, the client should be disconnected
         dg = Datagram.create([id], 10052, STATESERVER_OBJECT_CHANGING_LOCATION)
@@ -3251,8 +3278,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10052) # doid
         self.server.send(dg)
 
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Then disconnect the client, and the object shouldn't die
         client.close()
@@ -3290,8 +3316,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10052) # doid
         self.server.send(dg)
 
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Then delete the object, the client should not be disconnected
         dg = Datagram.create([id], 10052, STATESERVER_OBJECT_DELETE_RAM)
@@ -3343,16 +3368,16 @@ class TestClientAgent(ProtocolTest):
         self.server.flush()
         self.server.send(Datagram.create_add_channel(10010))
 
-        for test_id in xrange(4):
+        for test_id in range(4):
             proto_v2 = bool(test_id&1)
             ipv6 = bool(test_id&2)
             spoof_tlv = 'The higher we soar, the smaller we appear to those who cannot fly.'
 
             if ipv6:
                 source_ip = '2001:db8::1'
-                source_ip_bin = '20010db8000000000000000000000001'.decode('hex')
+                source_ip_bin = bytes.fromhex('20010db8000000000000000000000001')
                 dest_ip = '2001:db8:dead:beef::feed:1'
-                dest_ip_bin = '20010db8deadbeef00000000feed0001'.decode('hex')
+                dest_ip_bin = bytes.fromhex('20010db8deadbeef00000000feed0001')
             else:
                 source_ip = '203.0.113.5'
                 source_ip_bin = struct.pack('BBBB', 203, 0, 113, 5)
@@ -3365,8 +3390,8 @@ class TestClientAgent(ProtocolTest):
             if proto_v2:
                 body = (source_ip_bin + dest_ip_bin +
                         struct.pack('>HH', source_port, dest_port) +
-                        spoof_tlv)
-                header = ('\r\n\r\n\0\r\nQUIT\n\x21' +
+                        spoof_tlv.encode('latin-1'))
+                header = (b'\r\n\r\n\0\r\nQUIT\n\x21' +
                           struct.pack('>BH', 0x21 if ipv6 else 0x11, len(body)) +
                           body)
             else:
@@ -3439,15 +3464,14 @@ class TestClientAgent(ProtocolTest):
         # First heartbeat:
         self.send_heartbeat(client)
 
-        #sleep for 2/4 of a second, still should be connected after this.
-        time.sleep(0.50)
+        # Keep the connection quiet through half the heartbeat timeout. This
+        # checks liveness by waiting on the socket rather than pausing the test.
+        self.expectNoneFor(client, 0.5)
 
         #Check for connection and send heartbeat
         self.server.send(dg)
         self.expect(client, raw_dg, isClient = True)
         self.send_heartbeat(client)
-
-        time.sleep(1.25)
 
         # We should be disconnected now...
         self.assertDisconnect(client,CLIENT_DISCONNECT_NO_HEARTBEAT)
@@ -3479,9 +3503,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 1234)
-        self.assertEquals(dgi.read_uint16(), 1)
-        self.assertEquals(dgi.read_zone(), 300)
+        self.assertEqual(dgi.read_doid(), 1234)
+        self.assertEqual(dgi.read_uint16(), 1)
+        self.assertEqual(dgi.read_zone(), 300)
 
         dg = Datagram.create([id], 1234, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
         dg.add_uint32(context)
@@ -3544,9 +3568,9 @@ class TestClientAgent(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([6666], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), 6666)
-        self.assertEquals(dgi.read_uint16(), 1)
-        self.assertEquals(dgi.read_zone(), 400)
+        self.assertEqual(dgi.read_doid(), 6666)
+        self.assertEqual(dgi.read_uint16(), 1)
+        self.assertEqual(dgi.read_zone(), 400)
 
         dg = Datagram.create([id], 6666, STATESERVER_OBJECT_GET_ZONES_COUNT_RESP)
         dg.add_uint32(context)
@@ -3643,8 +3667,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3669,8 +3692,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3695,8 +3717,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3725,8 +3746,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Put the client in the ESTABLISHED state.
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3753,8 +3773,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)

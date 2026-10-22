@@ -1,0 +1,32 @@
+find_path(SOCI_INCLUDE_DIR NAMES soci/soci.h)
+find_library(SOCI_CORE_LIBRARY NAMES soci_core)
+
+if(SOCI_INCLUDE_DIR AND EXISTS "${SOCI_INCLUDE_DIR}/soci/version.h")
+    file(STRINGS "${SOCI_INCLUDE_DIR}/soci/version.h" _SOCI_VERSION_LINE
+        REGEX "^#define SOCI_VERSION [0-9]+$")
+    if(_SOCI_VERSION_LINE)
+        string(REGEX REPLACE "^#define SOCI_VERSION ([0-9]+)$" "\\1"
+            _SOCI_VERSION_NUMBER "${_SOCI_VERSION_LINE}")
+        math(EXPR _SOCI_VERSION_MAJOR "${_SOCI_VERSION_NUMBER} / 100000")
+        math(EXPR _SOCI_VERSION_MINOR "(${_SOCI_VERSION_NUMBER} / 100) % 1000")
+        math(EXPR _SOCI_VERSION_PATCH "${_SOCI_VERSION_NUMBER} % 100")
+        set(SOCI_VERSION_STRING
+            "${_SOCI_VERSION_MAJOR}.${_SOCI_VERSION_MINOR}.${_SOCI_VERSION_PATCH}")
+    endif()
+endif()
+
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(SOCI
+    REQUIRED_VARS SOCI_INCLUDE_DIR SOCI_CORE_LIBRARY
+    VERSION_VAR SOCI_VERSION_STRING
+)
+
+if(SOCI_FOUND AND NOT TARGET SOCI::SOCI)
+    add_library(SOCI::SOCI UNKNOWN IMPORTED)
+    set_target_properties(SOCI::SOCI PROPERTIES
+        IMPORTED_LOCATION "${SOCI_CORE_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${SOCI_INCLUDE_DIR}"
+    )
+endif()
+
+mark_as_advanced(SOCI_INCLUDE_DIR SOCI_CORE_LIBRARY)

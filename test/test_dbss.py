@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ProtocolTest
 from common.astron import *
@@ -78,7 +78,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid1) # object Id
+        self.assertEqual(dgi.read_doid(), doid1) # object Id
 
         # Send back to the DBSS with some required values
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -138,7 +138,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid1) # object Id
+        self.assertEqual(dgi.read_doid(), doid1) # object Id
 
         # Send back to the DBSS with some required values
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -182,7 +182,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid2, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid2) # object Id
+        self.assertEqual(dgi.read_doid(), doid2) # object Id
 
         # Send back to the DBSS with failed-to-find object
         dg = Datagram.create([doid2], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -218,7 +218,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid1) # object Id
+        self.assertEqual(dgi.read_doid(), doid1) # object Id
 
         # Send back to the DBSS with some required values
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -258,7 +258,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid1) # object Id
+        self.assertEqual(dgi.read_doid(), doid1) # object Id
 
         # This time pretend the object doesn't exist
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -286,7 +286,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid1) # object Id
+        self.assertEqual(dgi.read_doid(), doid1) # object Id
 
         # Try to activate the object
         dg = Datagram.create([doid1], 5, DBSS_OBJECT_ACTIVATE_WITH_DEFAULTS)
@@ -370,7 +370,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid2, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid2) # Id
+        self.assertEqual(dgi.read_doid(), doid2) # Id
 
         # Tell it the object exists
         dg = Datagram.create([doid2], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -424,7 +424,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid3) # object Id
+        self.assertEqual(dgi.read_doid(), doid3) # object Id
         dg = Datagram.create([doid3], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
         dg.add_uint32(context)
         dg.add_uint8(SUCCESS)
@@ -470,15 +470,15 @@ class TestDBStateServer(ProtocolTest):
         if dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_FIELD, 4+2)[0]:
             msgtype = DBSERVER_OBJECT_GET_FIELD
             context = dgi.read_uint32()
-            self.assertEquals(dgi.read_doid(), doid3)
-            self.assertEquals(dgi.read_uint16(), setFoo)
+            self.assertEqual(dgi.read_doid(), doid3)
+            self.assertEqual(dgi.read_uint16(), setFoo)
         # ... or GET_FIELDS with 1 field, both satisify the protocol
         elif dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_FIELDS, 4+2+2)[0]:
             msgtype = DBSERVER_OBJECT_GET_FIELDS
             context = dgi.read_uint32()
-            self.assertEquals(dgi.read_doid(), doid3)
-            self.assertEquals(dgi.read_uint16(), 1) # Field count
-            self.assertEquals(dgi.read_uint16(), setFoo)
+            self.assertEqual(dgi.read_doid(), doid3)
+            self.assertEqual(dgi.read_uint16(), 1) # Field count
+            self.assertEqual(dgi.read_uint16(), setFoo)
         else:
             self.fail("Unexpected message type.")
 
@@ -528,7 +528,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid3) # object Id
+        self.assertEqual(dgi.read_doid(), doid3) # object Id
         dg = Datagram.create([doid3], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
         dg.add_uint32(context)
         dg.add_uint8(FAILURE)
@@ -702,7 +702,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], 9031, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), 9031) # object Id
+        self.assertEqual(dgi.read_doid(), 9031) # object Id
 
         # Send back to the DBSS with some required values
         dg = Datagram.create([9031], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
@@ -825,17 +825,17 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([5], 9031, STATESERVER_OBJECT_GET_ALL_RESP))
-        self.assertEquals(dgi.read_uint32(), 2) # Context
-        self.assertEquals(dgi.read_doid(), 9031) # ID
-        self.assertEquals(dgi.read_doid(), 70000) # Parent
-        self.assertEquals(dgi.read_zone(), 300) # Zone
-        self.assertEquals(dgi.read_uint16(), DistributedTestObject5)
-        self.assertEquals(dgi.read_uint32(), 393939) # setRequired1
-        self.assertEquals(dgi.read_uint32(), 18811881) # setRDB3
-        self.assertEquals(dgi.read_uint8(), 222) # setRDbD5
-        self.assertEquals(dgi.read_uint16(), 1) # Optional field count
-        self.assertEquals(dgi.read_uint16(), setBR1)
-        self.assertEquals(dgi.read_string(), "Sleeping in the middle of a summer afternoon.")
+        self.assertEqual(dgi.read_uint32(), 2) # Context
+        self.assertEqual(dgi.read_doid(), 9031) # ID
+        self.assertEqual(dgi.read_doid(), 70000) # Parent
+        self.assertEqual(dgi.read_zone(), 300) # Zone
+        self.assertEqual(dgi.read_uint16(), DistributedTestObject5)
+        self.assertEqual(dgi.read_uint32(), 393939) # setRequired1
+        self.assertEqual(dgi.read_uint32(), 18811881) # setRDB3
+        self.assertEqual(dgi.read_uint8(), 222) # setRDbD5
+        self.assertEqual(dgi.read_uint16(), 1) # Optional field count
+        self.assertEqual(dgi.read_uint16(), setBR1)
+        self.assertEqual(dgi.read_string(), "Sleeping in the middle of a summer afternoon.")
 
         # Remove object from ram after tests
         dg = Datagram.create([9031], 5, STATESERVER_OBJECT_DELETE_RAM)
@@ -868,8 +868,8 @@ class TestDBStateServer(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELD))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), doid1)
-        self.assertEquals(dgi.read_uint16(), setDb3)
+        self.assertEqual(dgi.read_doid(), doid1)
+        self.assertEqual(dgi.read_uint16(), setDb3)
 
         # Return field value to DBSS
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_FIELD_RESP)
@@ -923,10 +923,10 @@ class TestDBStateServer(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELDS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), doid1) # ID
-        self.assertEquals(dgi.read_uint16(), 2) # Field count
-        self.assertEquals(dgi.read_uint16(), setDb3)
-        self.assertEquals(dgi.read_uint16(), setRDB3)
+        self.assertEqual(dgi.read_doid(), doid1) # ID
+        self.assertEqual(dgi.read_uint16(), 2) # Field count
+        self.assertEqual(dgi.read_uint16(), setDb3)
+        self.assertEqual(dgi.read_uint16(), setRDB3)
 
         # Return field value to DBSS
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_FIELDS_RESP)
@@ -968,9 +968,9 @@ class TestDBStateServer(ProtocolTest):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELDS))
         context = dgi.read_uint32()
-        self.assertEquals(dgi.read_doid(), doid1) # ID
-        self.assertEquals(dgi.read_uint16(), 1) # Field count
-        self.assertEquals(dgi.read_uint16(), setRDB3)
+        self.assertEqual(dgi.read_doid(), doid1) # ID
+        self.assertEqual(dgi.read_uint16(), 1) # Field count
+        self.assertEqual(dgi.read_uint16(), setRDB3)
 
         # Return field value to DBSS
         dg = Datagram.create([doid1], 1200, DBSERVER_OBJECT_GET_FIELDS_RESP)
@@ -1025,7 +1025,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid) # object Id
+        self.assertEqual(dgi.read_doid(), doid) # object Id
 
         # Ask if we are activated
         dg = Datagram.create([doid], 5, DBSS_OBJECT_GET_ACTIVATED)
@@ -1062,7 +1062,7 @@ class TestDBStateServer(ProtocolTest):
         self.assertTrue(*dgi.matches_header([1200], doid, DBSERVER_OBJECT_GET_ALL,
                                             remaining = 4 + DOID_SIZE_BYTES))
         context = dgi.read_uint32() # Get context
-        self.assertEquals(dgi.read_doid(), doid) # object Id
+        self.assertEqual(dgi.read_doid(), doid) # object Id
 
         # Ask if we are activated
         dg = Datagram.create([doid], 5, DBSS_OBJECT_GET_ACTIVATED)

@@ -1,0 +1,26 @@
+messagedirector:
+  bind: 0.0.0.0:6660
+
+roles:
+  - type: clientagent
+    bind: 0.0.0.0:6667
+    version: Astron Docker
+    channels:
+      min: 100100
+      max: 100999
+
+  - type: stateserver
+    control: 402000
+
+  - type: database
+    control: 402001
+    generate:
+      min: 100000000
+    backend:
+      type: mongodb
+      server: mongodb://mongodb:27017/astron
+
+  - type: dbss
+    database: 402001
+    ranges:
+      - min: 100000000

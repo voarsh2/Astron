@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ConfigTest
 from common.dcfile import *
@@ -15,7 +15,7 @@ class TestConfigEventLogger(ConfigTest):
                   output: /var/log/astron/eventlogger/el-%Y-%m-%d-%H-%M-%S.log
                   rotate_interval: 1d
             """
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
     def test_eventlogger_bind_address(self):
         config = """\
@@ -28,7 +28,7 @@ class TestConfigEventLogger(ConfigTest):
                   output: /var/log/astron/eventlogger/el-%Y-%m-%d-%H-%M-%S.log
                   rotate_interval: 1d
             """
-        self.assertEquals(self.checkConfig(config, 10), 'Invalid')
+        self.assertEqual(self.checkConfig(config, 10), 'Invalid')
 
         # ipv6 test disabled because client agent can't accept them yet, and causes a crash
         config = """\
@@ -41,7 +41,7 @@ class TestConfigEventLogger(ConfigTest):
                   output: /var/log/astron/eventlogger/el-%Y-%m-%d-%H-%M-%S.log
                   rotate_interval: 1d
             """
-        #self.assertEquals(self.checkConfig(config), 'Valid')
+        #self.assertEqual(self.checkConfig(config), 'Valid')
 
 if __name__ == '__main__':
     unittest.main()

@@ -11,7 +11,24 @@ Group, and used in-house from 2001 until 2013.
 The suite consists of many components, which handle separate tasks in order to distribute
 the workload of managing a multi-sharded game/application environment with many objects and clients.
 
-[![Build Status](https://travis-ci.org/Astron/Astron.svg?branch=master)](https://travis-ci.org/Astron/Astron)
+----
+
+### This is a fork
+
+This is an **unofficial fork of [Astron](https://github.com/Astron/Astron)**, focused on modernising its build system, dependencies, testing, and deployment tooling while aiming to preserve compatibility with the original protocol.
+
+This is **not an official Astron release**, and no guarantees of production readiness, feature completeness, or ongoing support are implied.
+
+The [original upstream repository](https://github.com/Astron/Astron) remains available for historical issues, documentation, and reference, and hopefully a future revival!
+
+Other related projects include:
+
+- [Ardos](https://github.com/ksmit799/Ardos) — an Astron-derived server with additional architectural features, including meshed Message Directors and legacy Disney client compatibility.
+- [OtpGo](https://github.com/LittleToonCat/OtpGo) — a Go implementation of Disney's OTP server architecture, focused on compatibility with original Disney MMO clients and supporting Lua-based game-specific server roles.
+
+These projects have different designs, priorities, and compatibility goals. If this fork benefits you, contributions and pull requests are welcome. **Sharing is caring.** :D
+
+----
 
 ## Overview ##
 
@@ -151,6 +168,16 @@ In addition, a DB-SS listens on the entire range of object IDs that it manages. 
 
 ## Building ##
 See the [build instructions](docs/building/build-readme.md).
+
+For a local container setup with the default YAML database, run
+`docker compose up --build`. To use PostgreSQL, run
+`docker compose --profile postgresql up --build astron-postgresql postgres`.
+The image is built by the GitHub Actions pipeline and published to GitHub
+Container Registry for pushes to the default branch and version tags.
+Successful CI runs also provide Windows, Linux, and macOS binary packages. The
+latest successful default-branch packages are kept on the rolling
+`latest-main` prerelease on the repository's Releases page; version-tagged
+packages are attached to their GitHub Releases.
 
 
 

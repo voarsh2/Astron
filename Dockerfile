@@ -1,110 +1,152 @@
-# Dockerfile for Building and Running Astron
+FROM ubuntu:24.04 AS build-base
 
-# Keep the fork's container-based build workflow. MongoDB support is optional
-# and remains disabled by default because the old libmongoclient-dev package
-# is obsolete.
-FROM ubuntu:latest
+ARG ASTRON_GIT_SHA
 
-ARG TARGET=linux
-ARG BUILD_TYPE=Release
-ARG BUILD_DB_MONGO=OFF
-ARG VCPKG_TARGET_TRIPLET=x64-mingw-static
-ARG STATIC_RUNTIME=ON
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && \
-    apt-get install -y \
-    cmake \
-    libyaml-cpp-dev \
-    llvm \
-    libboost-dev \
-    clang \
-    g++ \
-    gcc \
-    libuv1-dev
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bison \
+        build-essential \
+        cmake \
+        flex \
+        libboost-dev \
+        libuv1-dev \
+        libyaml-cpp-dev \
+        ninja-build \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN if [ "${TARGET}" = "windows" ]; then \
-        apt-get update && \
-        apt-get install -y \
-            binutils-mingw-w64-x86-64 \
-            curl \
-            g++-mingw-w64-x86-64 \
-            git \
-            ninja-build \
-            pkg-config \
-            tar \
-            unzip \
-            zip && \
-        git clone --depth 1 https://github.com/microsoft/vcpkg.git /opt/vcpkg && \
-        /opt/vcpkg/bootstrap-vcpkg.sh -disableMetrics && \
-        /opt/vcpkg/vcpkg install \
-            boost-icl:${VCPKG_TARGET_TRIPLET} \
-            libuv:${VCPKG_TARGET_TRIPLET} \
-            yaml-cpp:${VCPKG_TARGET_TRIPLET} && \
-        if [ "${BUILD_DB_MONGO}" = "ON" ]; then \
-            /opt/vcpkg/vcpkg install mongo-cxx-driver:${VCPKG_TARGET_TRIPLET}; \
-        fi; \
-    fi
+WORKDIR /src
+COPY . .
 
-# Copy this checkout, including its current working-tree changes, into the
-# build container.
-COPY . /app-src
-WORKDIR /app-src
+FROM build-base AS build-postgresql
 
-RUN mkdir -p /app/build /app/package/lib /app/package/tests /app/package/include/astron && \
-    cd /app/build && \
-    if [ "${TARGET}" = "windows" ]; then \
-        if [ "${STATIC_RUNTIME}" = "OFF" ]; then \
-            CXX_FLAGS=''; \
-            LINKER_FLAGS=''; \
-        else \
-            CXX_FLAGS='-static-libgcc -static-libstdc++'; \
-            LINKER_FLAGS='-static'; \
-        fi; \
-        cmake -G Ninja \
-              -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-              -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-              -DCMAKE_SYSTEM_NAME=Windows \
-              -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc-posix \
-              -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++-posix \
-              -DCMAKE_RC_COMPILER=x86_64-w64-mingw32-windres \
-              -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake \
-              -DVCPKG_TARGET_TRIPLET=${VCPKG_TARGET_TRIPLET} \
-              -DVCPKG_HOST_TRIPLET=x64-linux \
-              -DBUILD_DB_MONGO=${BUILD_DB_MONGO} \
-              -DCMAKE_CXX_FLAGS="${CXX_FLAGS}" \
-              -DCMAKE_EXE_LINKER_FLAGS="${LINKER_FLAGS}" /app-src; \
-    else \
-        cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-              -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-              -DBUILD_DB_MONGO=${BUILD_DB_MONGO} /app-src; \
-    fi && \
-    cmake --build . --parallel "$(nproc)" && \
-    if [ "${TARGET}" = "windows" ]; then \
-        cp astrond.exe /app/astrond.exe; \
-        cp astrond.exe /app/package/astrond.exe; \
-    else \
-        cp astrond /app/astrond; \
-        cp astrond /app/package/astrond; \
-    fi && \
-    cp libastron.a /app/package/lib/libastron.a && \
-    cp src/dclass/libdclass.a /app/package/lib/libdclass.a && \
-    cp /app-src/src/local/astron_embed.h /app/package/include/astron/astron_embed.h && \
-    for tool in test_poll_pause test_local_embed astron_local_host; do \
-        for suffix in "" .exe; do \
-            if [ -f "${tool}${suffix}" ]; then \
-                cp "${tool}${suffix}" /app/package/tests/; \
-            fi; \
-        done; \
-    done && \
-    if [ "${TARGET}" = "windows" ] && [ -d "/opt/vcpkg/installed/${VCPKG_TARGET_TRIPLET}/bin" ]; then \
-        find "/opt/vcpkg/installed/${VCPKG_TARGET_TRIPLET}/bin" -maxdepth 1 -type f -iname '*.dll' -exec cp {} /app/package/ \;; \
-    fi && \
-    printf 'target=%s\nbuild_type=%s\nbuild_db_mongo=%s\nvcpkg_target_triplet=%s\nstatic_runtime=%s\n' \
-        "${TARGET}" "${BUILD_TYPE}" "${BUILD_DB_MONGO}" "${VCPKG_TARGET_TRIPLET}" "${STATIC_RUNTIME:-ON}" \
-        > /app/package/BUILD-INFO.txt && \
-    rm -rf /app-src /app/build
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpq-dev \
+        libsoci-dev \
+        libsoci-postgresql4.0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && cmake -S . -B /tmp/astron-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DASTRON_REGENERATE_DC_PARSER=ON \
+        -DBUILD_DB_POSTGRESQL=ON \
+        -DASTRON_GIT_SHA="${ASTRON_GIT_SHA}" \
+    && cmake --build /tmp/astron-build --parallel
 
-WORKDIR /app
-COPY startup.sh .
-RUN chmod +x startup.sh
-ENTRYPOINT ["./startup.sh"]
+FROM ubuntu:24.04 AS mongo-driver
+
+ARG MONGOCXX_VERSION=4.6.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        git \
+        libicu-dev \
+        libsnappy-dev \
+        libssl-dev \
+        libsasl2-dev \
+        libzstd-dev \
+        ninja-build \
+        pkg-config \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch "r${MONGOCXX_VERSION}" \
+        https://github.com/mongodb/mongo-cxx-driver.git /tmp/mongo-cxx-driver \
+    && cmake -S /tmp/mongo-cxx-driver -B /tmp/mongo-cxx-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_INSTALL_PREFIX=/opt/mongodb \
+        -DBUILD_VERSION="${MONGOCXX_VERSION}" \
+        -DENABLE_TESTS=OFF \
+        -DBUILD_TESTING=OFF \
+    && cmake --build /tmp/mongo-cxx-build --parallel 4 \
+    && cmake --install /tmp/mongo-cxx-build
+
+FROM mongo-driver AS mongo-runtime-libs
+
+RUN mkdir -p /tmp/mongo-runtime/lib \
+    && cp -a /opt/mongodb/lib/libmongocxx1.so.* \
+        /opt/mongodb/lib/libbsoncxx1.so.* \
+        /opt/mongodb/lib/libmongoc2.so.* \
+        /opt/mongodb/lib/libbson2.so.* \
+        /tmp/mongo-runtime/lib/
+
+FROM build-base AS build-mongodb
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libsasl2-dev \
+        libsnappy1v5 \
+        libssl-dev \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=mongo-driver /opt/mongodb /opt/mongodb
+
+RUN cmake -S . -B /tmp/astron-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DASTRON_REGENERATE_DC_PARSER=ON \
+        -DCMAKE_PREFIX_PATH=/opt/mongodb \
+        -DBUILD_DB_MONGO=ON \
+        -DASTRON_GIT_SHA="${ASTRON_GIT_SHA}" \
+    && cmake --build /tmp/astron-build --parallel
+
+FROM ubuntu:24.04 AS runtime-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libuv1t64 \
+        libyaml-cpp0.8 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --create-home --home-dir /var/lib/astron --shell /usr/sbin/nologin astron \
+    && mkdir -p /etc/astron /var/lib/astron/database \
+    && chown -R astron:astron /var/lib/astron
+
+WORKDIR /var/lib/astron
+EXPOSE 6660 6667
+ENTRYPOINT ["astrond"]
+CMD ["-l", "info", "/etc/astron/astron.yml"]
+
+FROM runtime-base AS runtime-postgresql
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libpq5 \
+        libsoci-core4.0 \
+        libsoci-postgresql4.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build-postgresql /tmp/astron-build/astrond /usr/local/bin/astrond
+COPY docker/astron.yml /etc/astron/astron.yml
+COPY docker/astron-yaml.yml /etc/astron/astron-yaml.yml
+USER astron
+
+FROM runtime-base AS runtime-mongodb
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libicu74 \
+        libsnappy1v5 \
+        libssl3t64 \
+        libsasl2-2 \
+        libzstd1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=mongo-runtime-libs /tmp/mongo-runtime/lib /opt/mongodb/lib
+RUN echo /opt/mongodb/lib > /etc/ld.so.conf.d/mongodb.conf && ldconfig
+COPY --from=build-mongodb /tmp/astron-build/astrond /usr/local/bin/astrond
+COPY docker/astron-mongo.yml /etc/astron/astron-mongo.yml
+COPY docker/astron-yaml.yml /etc/astron/astron-yaml.yml
+USER astron
+CMD ["-l", "info", "/etc/astron/astron-mongo.yml"]
+
+FROM runtime-postgresql AS runtime
+CMD ["-l", "info", "/etc/astron/astron-yaml.yml"]

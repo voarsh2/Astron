@@ -2,21 +2,19 @@ Building with _Visual Studio_ on Windows
 ------------------------------------------
 
 ### Dependencies ###
-You will need to, of-course, clone the repository.
-After you have the repository you will need to download and build Astron's
-dependencies.  See the [building readme](build-readme.md) for instructions.
+Use a C++17-capable Visual Studio toolchain, CMake 3.18 or newer, Boost ICL,
+libuv, and yaml-cpp. The optional MongoDB backend also requires the MongoDB C++
+driver 4.4 or newer. See the [building readme](build-readme.md) for details.
+The checked-in parser sources are used by default on Windows.
 
 
 ### Preparing the VS Project ###
-_Currently, Astron only supports Visual Studio 2013 and above._
-
-_Preparing Astron for VisualStudio requires CMake. It is recommend to use the
-cmake-gui. (Download from http://www.cmake.org/cmake/resources/software.html)_
+Preparing Astron for Visual Studio requires CMake. CMake GUI or the command
+line can be used.
 
 Under `Where is the source code:` Enter the path to your clone of Astron.
 
-For `Where to build the binaries:` it is recommended to use a directory outside
-of the repository like `<ASTRON_PATH>/../build` or `../AstronBuild`.
+For `Where to build the binaries:` choose a directory outside the repository.
 
 Then, hit `Configure` followed by `Generate` button.
 

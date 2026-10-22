@@ -17,14 +17,14 @@ class Daemon(object):
             # User wants to manually launch their Astron daemon, so we'll write
             # out the config for them and prompt them to
             with open(os.environ['MANUAL_LAUNCH_CONFIG'], 'wb') as config:
-                config.write(self.config)
+                config.write(self.config.encode('utf-8'))
 
-            raw_input('Waiting for manual launch; press enter when ready...')
+            input('Waiting for manual launch; press enter when ready...')
 
             return # Because the start happened manually.
 
         configHandle, self.config_file = tempfile.mkstemp(prefix = 'astron', suffix = 'cfg.yaml')
-        os.write(configHandle, self.config)
+        os.write(configHandle, self.config.encode('utf-8'))
         os.close(configHandle)
 
         args = [self.DAEMON_PATH]
@@ -32,18 +32,41 @@ class Daemon(object):
             args += ["--loglevel", os.environ['USE_LOGLEVEL']]
         args += [self.config_file]
 
-        self.daemon = subprocess.Popen(args)
+        try:
+            self.daemon = subprocess.Popen(args)
 
-        time.sleep(1.0) # Allow some time for daemon to initialize...
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                if self.daemon.poll() is not None:
+                    raise RuntimeError(
+                        'Astron exited during startup with status %d' % self.daemon.returncode
+                    )
+                try:
+                    with socket.create_connection(('127.0.0.1', 57123), timeout=0.1):
+                        return
+                except OSError:
+                    # This interval only backs off readiness polling; startup is
+                    # complete when the Message Director accepts a connection.
+                    time.sleep(0.01)
+
+            raise RuntimeError('Message Director did not become ready within 30 seconds')
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self):
-        time.sleep(1.0) # Allow some time for daemon to finish up...
         if self.daemon is not None:
-            self.daemon.kill()
+            if self.daemon.poll() is None:
+                self.daemon.kill()
             # In Windows, kill() is an alias for terminate(), which isn't guaranteed to be instantaneous like SIGKILL signals are on UNIX systems.
             self.daemon.wait()
+            self.daemon = None
         if self.config_file is not None:
-            os.remove(self.config_file)
+            try:
+                os.remove(self.config_file)
+            except FileNotFoundError:
+                pass
+            self.config_file = None
 
 DATATYPES = {
     'int8': '<b',
@@ -292,6 +315,8 @@ class Datagram(object):
             setattr(self, 'add_' + k, adder)
 
     def add_raw(self, data):
+        if isinstance(data, str):
+            data = data.encode('latin-1')
         self._data += data
 
     def add_string(self, string):
@@ -313,7 +338,7 @@ class Datagram(object):
         return self._data
 
     def get_payload(self):
-        return self._data[CHANNEL_SIZE_BYTES*ord(self._data[0])+1:]
+        return self._data[CHANNEL_SIZE_BYTES*self._data[0]+1:]
 
     def get_msgtype(self):
         return struct.unpack('<H', self.get_payload()[CHANNEL_SIZE_BYTES:CHANNEL_SIZE_BYTES+2])[0]
@@ -321,7 +346,7 @@ class Datagram(object):
     def get_channels(self):
         channels = []
         iterator = DatagramIterator(self, 1)
-        for x in xrange(ord(self._data[0])):
+        for x in range(self._data[0]):
             channels.append(iterator.read_channel())
         return set(channels)
 
@@ -442,8 +467,11 @@ class DatagramIterator(object):
             raise EOFError('End of Datagram')
 
         unpacked = struct.unpack(f, self._data[self._offset-offset:self._offset])
-        if len(unpacked) is 1:
-            return unpacked[0]
+        if len(unpacked) == 1:
+            value = unpacked[0]
+            if f.endswith('s'):
+                return value.decode('latin-1')
+            return value
         else:
             return unpacked
 
@@ -460,7 +488,7 @@ class DatagramIterator(object):
         if len(channels) != len(recipients):
             return (False, "Recipients length doesn't match")
 
-        self.seek(CHANNEL_SIZE_BYTES*ord(self._data[0])+1)
+        self.seek(CHANNEL_SIZE_BYTES*self._data[0]+1)
         readSender = self.read_channel()
         if sender != readSender:
             return (False, "Sender doesn't match, %d != %d (expected, actual)"
@@ -483,7 +511,8 @@ class DatagramIterator(object):
         if self._offset > len(self._data):
             raise EOFError('End of Datagram')
 
-        return struct.unpack("<%ds" % length, self._data[self._offset-length:self._offset])[0]
+        value = struct.unpack("<%ds" % length, self._data[self._offset-length:self._offset])[0]
+        return value.decode('latin-1')
 
     def read_remainder(self):
         remainder = self._data[self._offset:]
@@ -500,11 +529,12 @@ class MDConnection(object):
     def __init__(self, sock):
         self.s = sock
         self.s.settimeout(0.1)
+        self._recv_buffer = bytearray()
 
     def send(self, datagram):
         data = datagram.get_data()
         msg = struct.pack(DATATYPES['size'], len(data)) + data
-        self.s.send(msg)
+        self.s.sendall(msg)
 
     def recv(self):
         dg = self._read()
@@ -525,32 +555,38 @@ class MDConnection(object):
         while self._read(): pass
 
     def _recv(self, length):
-        if hasattr(socket, 'MSG_WAITALL'):
-            return self.s.recv(length, socket.MSG_WAITALL)
-
+        # _read() accumulates partial frames itself. MSG_WAITALL is not
+        # supported by Winsock for sockets in timeout mode, which Python
+        # implements using non-blocking sockets.
         return self.s.recv(length)
 
     def _read(self):
         try:
-            length = DGSIZE_SIZE_BYTES
-            result = ''
-            while len(result) < length:
-                data = self._recv(length - len(result))
+            header_size = DGSIZE_SIZE_BYTES
+            while len(self._recv_buffer) < header_size:
+                data = self._recv(header_size - len(self._recv_buffer))
                 if not data:
                     raise EOFError('Remote socket closed connection')
-                result += data
-            length, = struct.unpack(DATATYPES['size'], result)
-        except socket.error:
+                self._recv_buffer.extend(data)
+
+            length, = struct.unpack(DATATYPES['size'], self._recv_buffer[:header_size])
+
+            frame_size = header_size + length
+            while len(self._recv_buffer) < frame_size:
+                data = self._recv(frame_size - len(self._recv_buffer))
+                if not data:
+                    raise EOFError('Remote socket closed connection')
+                self._recv_buffer.extend(data)
+        except (socket.timeout, BlockingIOError):
             return None
+        except ConnectionError as error:
+            # Winsock may report an aborted/reset peer as an error instead of
+            # returning an empty read, which is the usual EOF signal.
+            raise EOFError('Remote socket closed connection') from error
 
-        result = ''
-        while len(result) < length:
-            data = self._recv(length - len(result))
-            if not data:
-                raise EOFError('Remote socket closed connection')
-            result += data
-
-        return result
+        datagram = bytes(self._recv_buffer[header_size:frame_size])
+        del self._recv_buffer[:frame_size]
+        return datagram
 
 class ChannelConnection(MDConnection):
     def __init__(self, connAddr, connPort, MDChannel=None):
@@ -575,10 +611,8 @@ class ChannelConnection(MDConnection):
             self.channels.remove(channel)
 
     def clear_channels(self):
-        for channel in self.channels:
-            self.send(Datagram.create_remove_channel(channel))
-            self.channels.remove(channel)
-        self.channels = []
+        for channel in list(self.channels):
+            self.remove_channel(channel)
 
     def close(self):
         for chan in self.channels:
@@ -594,7 +628,7 @@ class ClientConnection(MDConnection):
         while datagrams:
             dg = self._read()
             if dg is None:
-                if numIn is 0:
+                if numIn == 0:
                     return (False, "No datagram received.")
                 else:
                     return (False, "Only received " + str(numIn) + " datagrams, but expected " + str(numE))

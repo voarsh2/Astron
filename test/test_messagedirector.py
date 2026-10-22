@@ -1,4 +1,5 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
+import time
 import unittest
 from socket import *
 
@@ -12,6 +13,18 @@ messagedirector:
 """
 
 class TestMessageDirector(ProtocolTest):
+    @staticmethod
+    def assertConnectionClosed(conn):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                datagram = conn.recv_maybe()
+            except EOFError:
+                return
+            if datagram is not None:
+                raise AssertionError("Received a datagram while waiting for connection close")
+        raise AssertionError("Message Director did not close the malformed participant")
+
     @classmethod
     def setUpClass(cls):
         listener = socket(AF_INET, SOCK_STREAM)
@@ -642,11 +655,11 @@ class TestMessageDirector(ProtocolTest):
         dg.add_channel(0) # Sender
         dg.add_uint16(CONTROL_ADD_CHANNEL)
         dg.add_channel(0x1CEDC0FF)
-        self.c1.s.send(dg.get_data())
+        self.c1.s.sendall(dg.get_data())
         # The MD should drop this packet completely.
         self.expectNone(self.l1)
         # The MD should drop the misbehaving participant.
-        self.assertRaises(EOFError, self.c1.recv_maybe())
+        self.assertConnectionClosed(self.c1)
 
         # Cleanup
         self.c1.close()
@@ -660,11 +673,11 @@ class TestMessageDirector(ProtocolTest):
         dg.add_channel(12341234) # Recipient
         dg.add_channel(0) # Sender
         dg.add_string('Ex nihilo, alea iacta est. Tohuvabohu!')
-        self.c1.s.send(dg.get_data())
+        self.c1.s.sendall(dg.get_data())
         # The MD should drop this packet completely.
         self.expectNone(self.l1)
         # The MD should drop the misbehaving participant.
-        self.assertRaises(EOFError, self.c1.recv_maybe())
+        self.assertConnectionClosed(self.c1)
 
         # Cleanup
         self.c1.close()
