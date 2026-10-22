@@ -9,7 +9,7 @@
 #include "dclass/dc/Class.h"
 #include "dclass/dc/Field.h"
 
-#include <soci.h>
+#include <soci/soci.h>
 #include <boost/icl/interval_set.hpp>
 
 using namespace std;
@@ -22,7 +22,7 @@ typedef boost::icl::interval_set<doid_t> set_t;
 static ConfigGroup soci_backend_config("soci", db_backend_config);
 static ConfigVariable<string> database_driver("driver", "mysql", soci_backend_config);
 static ConfigVariable<string> database_name("database", "", soci_backend_config);
-static ConfigVariable<string> database_address("address", "", soci_backend_config);
+static ConfigVariable<string> database_server("server", "", soci_backend_config);
 static ConfigVariable<string> database_username("username", "", soci_backend_config);
 static ConfigVariable<string> database_password("password", "", soci_backend_config);
 
@@ -33,6 +33,8 @@ class SociSQLDatabase : public OldDatabaseBackend
         OldDatabaseBackend(dbeconfig, min_id, max_id), m_min_id(min_id), m_max_id(max_id),
         m_backend(database_driver.get_rval(dbeconfig)),
         m_db_name(database_name.get_rval(dbeconfig)),
+        m_db_host(),
+        m_db_port(0),
         m_sess_user(database_username.get_rval(dbeconfig)),
         m_sess_passwd(database_password.get_rval(dbeconfig))
     {
@@ -40,14 +42,25 @@ class SociSQLDatabase : public OldDatabaseBackend
         log_name << "Database-" << m_backend << "(Range: [" << min_id << ", " << max_id << "])";
         m_log = new LogCategory(m_backend, log_name.str());
 
-        string server = database_address.get_rval(dbeconfig);
-        size_t col_index = server.find_last_of(":");
-        size_t sqr_index = server.find_last_of("]");
-        if(col_index != string::npos && col_index > sqr_index) {
-            m_db_host = server.substr(0, col_index);
-            m_db_port = stoi(server.substr(col_index + 1));
+        string server = database_server.get_rval(dbeconfig);
+        if(!server.empty() && server.front() == '[') {
+            size_t bracket_index = server.find(']');
+            if(bracket_index != string::npos) {
+                m_db_host = server.substr(1, bracket_index - 1);
+                if(bracket_index + 1 < server.size() && server[bracket_index + 1] == ':') {
+                    m_db_port = static_cast<uint16_t>(stoi(server.substr(bracket_index + 2)));
+                }
+            } else {
+                m_db_host = server;
+            }
         } else {
-            m_db_host = server;
+            size_t colon_index = server.find_last_of(":");
+            if(colon_index != string::npos && server.find_first_of(":") == colon_index) {
+                m_db_host = server.substr(0, colon_index);
+                m_db_port = static_cast<uint16_t>(stoi(server.substr(colon_index + 1)));
+            } else {
+                m_db_host = server;
+            }
         }
 
         connect();

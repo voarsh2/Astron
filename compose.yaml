@@ -1,0 +1,76 @@
+services:
+  astron:
+    image: ghcr.io/astron/astron:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    ports:
+      - "6660:6660"
+      - "6667:6667"
+    volumes:
+      - astron-yaml-data:/var/lib/astron/database
+    restart: unless-stopped
+
+  astron-postgresql:
+    profiles: [postgresql]
+    image: ghcr.io/astron/astron:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6660:6660"
+      - "6667:6667"
+    command: ["-l", "info", "/etc/astron/astron.yml"]
+    restart: unless-stopped
+
+  postgres:
+    profiles: [postgresql]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: astron
+      POSTGRES_USER: astron
+      POSTGRES_PASSWORD: astron
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U astron -d astron"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - astron-postgres:/var/lib/postgresql/data
+
+  astron-mongodb:
+    profiles: [mongodb]
+    image: ghcr.io/astron/astron:mongodb-latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-mongodb
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "6660:6660"
+      - "6667:6667"
+    command: ["-l", "info", "/etc/astron/astron-mongo.yml"]
+    restart: unless-stopped
+
+  mongodb:
+    profiles: [mongodb]
+    image: mongo:8.0
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - astron-mongodb-data:/data/db
+
+volumes:
+  astron-postgres:
+  astron-yaml-data:
+  astron-mongodb-data:

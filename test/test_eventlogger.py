@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest, time, socket, os, json, tempfile
 from common.astron import *
 from common.dcfile import *

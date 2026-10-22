@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ConfigTest
 from common.dcfile import *
@@ -57,7 +57,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 220600
                       max: 220699
             """ % test_dc
-        self.assertEquals(self.checkConfig(config), 'Valid')
+        self.assertEqual(self.checkConfig(config), 'Valid')
 
     def test_ca_invalid_attr(self):
         config = """\
@@ -73,7 +73,7 @@ class TestConfigClientAgent(ConfigTest):
                       max: 3999
                   weeuuweeeuu: sirens!
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_invalid_channels(self):
         config = """\
@@ -88,7 +88,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 0
                       max: 3999
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -102,7 +102,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 3100
                       max: 0
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_reserved_channels(self):
         config = """\
@@ -117,7 +117,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 100
                       max: 3999
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
             messagedirector:
@@ -131,7 +131,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 3100
                       max: 999
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_client_type_typo(self):
         config = """\
@@ -148,7 +148,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 3100
                       max: 3999
             """
-        self.assertEquals(self.checkConfig(config), 'Invalid')
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_bind_address(self):
         config = """\
@@ -163,7 +163,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 3100
                       max: 3999
             """
-        self.assertEquals(self.checkConfig(config, 10), 'Invalid')
+        self.assertEqual(self.checkConfig(config, 10), 'Invalid')
 
         # ipv6 test disabled because client agent can't accept them yet, and causes a crash
         config = """\
@@ -178,7 +178,7 @@ class TestConfigClientAgent(ConfigTest):
                       min: 3100
                       max: 3999
             """
-        #self.assertEquals(self.checkConfig(config), 'Valid')
+        #self.assertEqual(self.checkConfig(config), 'Valid')
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,5 @@
-from astron import *
-from dcfile import *
+from common.astron import *
+from common.dcfile import *
 
 CREATE_DOID_OFFSET = 1 + (CHANNEL_SIZE_BYTES * 2) + 2 + 4
 
@@ -54,7 +54,7 @@ class DBServerTestsuite(object):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
                                             remaining = 4 + DOID_SIZE_BYTES))
-        self.assertEquals(dgi.read_uint32(), 1) # Check context
+        self.assertEqual(dgi.read_uint32(), 1) # Check context
         doids.append(dgi.read_doid())
         self.assertGreaterEqual(doids[0], 1000000) # do_id in valid range
         self.assertLessEqual(doids[0], 1000010) # do_id in valid range
@@ -90,7 +90,7 @@ class DBServerTestsuite(object):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
                                             remaining = 4 + DOID_SIZE_BYTES))
-        self.assertEquals(dgi.read_uint32(), 4) # Check context
+        self.assertEqual(dgi.read_uint32(), 4) # Check context
         doids.append(dgi.read_doid())
         self.assertGreaterEqual(doids[1], 1000000) # do_id in valid range
         self.assertLessEqual(doids[1], 1000010) # do_id in valid range
@@ -140,7 +140,7 @@ class DBServerTestsuite(object):
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
                                             remaining = 4 + DOID_SIZE_BYTES))
-        self.assertEquals(dgi.read_uint32(), 7) # Check context
+        self.assertEqual(dgi.read_uint32(), 7) # Check context
         doids.append(dgi.read_doid())
         self.assertGreaterEqual(doids[-1], 1000000) # do_id in valid range
         self.assertLessEqual(doids[-1], 1000010) # do_id in valid range
@@ -228,16 +228,16 @@ class DBServerTestsuite(object):
             doids.append(doid)
             doid = self.createGenericGetId(40, len(doids))
 
-        self.assertEquals(len(set(doids)), len(doids)) # Check if duplicate do_ids exist
-        self.assertEquals(len(doids), 11) # Check we received the max do_ids we requested
-        self.assertEquals(doid, INVALID_DO_ID) # Check the last object returned was BAD_DO_ID (0x0)
+        self.assertEqual(len(set(doids)), len(doids)) # Check if duplicate do_ids exist
+        self.assertEqual(len(doids), 11) # Check we received the max do_ids we requested
+        self.assertEqual(doid, INVALID_DO_ID) # Check the last object returned was BAD_DO_ID (0x0)
 
         # Delete an object
         self.deleteObject(40, doids[6])
 
         # Get new object with the last remaining id
         newdoid = self.createGenericGetId(40, 16)
-        self.assertEquals(newdoid, doids[6])
+        self.assertEqual(newdoid, doids[6])
 
         # Delete multiple objects
         self.deleteObject(40, doids[0])
@@ -284,7 +284,7 @@ class DBServerTestsuite(object):
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([50], 75757, DBSERVER_CREATE_OBJECT_RESP))
-        self.assertEquals(dgi.read_uint32(), 1) # Check context
+        self.assertEqual(dgi.read_uint32(), 1) # Check context
         doid = dgi.read_doid()
 
         def assert_no_change(context):
@@ -1301,7 +1301,7 @@ class DBServerTestsuite(object):
         def add_fields_to_complex(dg):
             array_length = 5
             dg.add_size(array_length * 3 * 4) # Byte size of named array
-            for i in xrange(array_length + 3): # Variable length array followed by fixed
+            for i in range(array_length + 3): # Variable length array followed by fixed
                 # Each of these is a "Block" struct, which consists of 3 uint32s:
                 dg.add_uint32((i<<17) + ord('x'))
                 dg.add_uint32((i<<17) + ord('y'))

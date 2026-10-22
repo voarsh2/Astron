@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest, tempfile, shutil
 from common.unittests import ProtocolTest
 from common.dbserver import DBServerTestsuite

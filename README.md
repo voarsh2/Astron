@@ -11,8 +11,6 @@ Group, and used in-house from 2001 until 2013.
 The suite consists of many components, which handle separate tasks in order to distribute
 the workload of managing a multi-sharded game/application environment with many objects and clients.
 
-[![Build Status](https://travis-ci.org/Astron/Astron.svg?branch=master)](https://travis-ci.org/Astron/Astron)
-
 ## Overview ##
 
 ### Objects ###
@@ -151,6 +149,12 @@ In addition, a DB-SS listens on the entire range of object IDs that it manages. 
 
 ## Building ##
 See the [build instructions](docs/building/build-readme.md).
+
+For a local container setup with the default YAML database, run
+`docker compose up --build`. To use PostgreSQL, run
+`docker compose --profile postgresql up --build astron-postgresql postgres`.
+The image is built by the GitHub Actions pipeline and published to GitHub
+Container Registry for pushes to the default branch and version tags.
 
 
 

@@ -1,6 +1,6 @@
 import unittest, subprocess, tempfile, os, threading
 from socket import socket, AF_INET, SOCK_STREAM, SOL_TCP, TCP_NODELAY
-from astron import *
+from common.astron import *
 
 class ConfigTest(unittest.TestCase):
     class ConfigRunner(object):
@@ -82,7 +82,7 @@ class ProtocolTest(unittest.TestCase):
         if isClient:
             expectedMsgtype = lhs.read_uint16()
             receivedMsgtype = rhs.read_uint16()
-            self.assertEquals(expectedMsgtype, receivedMsgtype)
+            self.assertEqual(expectedMsgtype, receivedMsgtype)
 
             if not received.equals(expected):
                 self.writeDatagramsAndFail(expected, received)
@@ -90,11 +90,11 @@ class ProtocolTest(unittest.TestCase):
         else:
             numChannelsExpected = lhs.read_uint8()
             numChannelsReceived = rhs.read_uint8()
-            self.assertEquals(numChannelsExpected, numChannelsReceived)
+            self.assertEqual(numChannelsExpected, numChannelsReceived)
 
             expectedRecipients = expected.get_channels()
             receivedRecipients = received.get_channels()
-            self.assertEquals(expectedRecipients, receivedRecipients)
+            self.assertEqual(expectedRecipients, receivedRecipients)
 
             lhs.seek(1 + CHANNEL_SIZE_BYTES * numChannelsExpected)
             rhs.seek(1 + CHANNEL_SIZE_BYTES * numChannelsReceived)
@@ -103,11 +103,11 @@ class ProtocolTest(unittest.TestCase):
                 # If we aren't a control datagram, check the sender
                 expectedSender = lhs.read_channel()
                 receivedSender = rhs.read_channel()
-                self.assertEquals(expectedSender, receivedSender)
+                self.assertEqual(expectedSender, receivedSender)
 
             expectedMsgtype = lhs.read_uint16()
             receivedMsgtype = rhs.read_uint16()
-            self.assertEquals(expectedMsgtype, receivedMsgtype)
+            self.assertEqual(expectedMsgtype, receivedMsgtype)
 
             if not received.matches(expected):
                 self.writeDatagramsAndFail(expected, received)

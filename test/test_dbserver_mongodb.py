@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest
 from common.unittests import ProtocolTest
 from common.dbserver import DBServerTestsuite
@@ -23,7 +23,7 @@ roles:
         max: 1000010
       backend:
         type: mongodb
-        server: mongodb://127.0.0.1:57023/test
+        server: mongodb://127.0.0.1:57024/test
 """ % test_dc
 
 class TestDatabaseServerMongo(ProtocolTest, DBServerTestsuite):
@@ -44,7 +44,6 @@ class TestDatabaseServerMongo(ProtocolTest, DBServerTestsuite):
                                                       DATABASE_PREFIX|1000010))
         cls.objects.close()
         cls.daemon.stop()
-        cls.mongod.terminate()
         teardown_mongo(cls)
 
 if __name__ == '__main__':

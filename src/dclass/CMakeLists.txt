@@ -1,62 +1,55 @@
-cmake_minimum_required(VERSION 2.8)
-project(DistributedClasses)
-include_directories(.)
+set(DC_PARSER_SOURCES)
+set(DC_PARSER_INCLUDE_DIRS)
 
-find_package(BISON)
-if(BISON_FOUND)
-    add_custom_command(
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/file/parser.ypp
-      COMMAND ${BISON_EXECUTABLE} --defines=parser.h -o parser.cpp parser.ypp
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/file
-      COMMENT "Generating dclass/parser.cpp"
-      OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/file/parser.cpp
-             ${CMAKE_CURRENT_SOURCE_DIR}/file/parser.h
-    )
-endif(BISON_FOUND)
+if(ASTRON_REGENERATE_DC_PARSER)
+    set(DC_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${DC_GENERATED_DIR}/file")
 
-find_package(FLEX)
-if(FLEX_FOUND)
-    add_custom_command(
-      DEPENDS file/lexer.lpp
-      COMMAND ${FLEX_EXECUTABLE} -olexer.cpp lexer.lpp
-      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/file
-      COMMENT "Generating dclass/lexer.cpp"
-      OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/file/lexer.cpp
+    BISON_TARGET(DCParser
+        "${CMAKE_CURRENT_SOURCE_DIR}/file/parser.ypp"
+        "${DC_GENERATED_DIR}/file/parser.cpp"
+        DEFINES_FILE "${DC_GENERATED_DIR}/file/parser.h"
     )
-endif(FLEX_FOUND)
+    FLEX_TARGET(DCLexer
+        "${CMAKE_CURRENT_SOURCE_DIR}/file/lexer.lpp"
+        "${DC_GENERATED_DIR}/file/lexer.cpp"
+    )
+    ADD_FLEX_BISON_DEPENDENCY(DCLexer DCParser)
+
+    list(APPEND DC_PARSER_SOURCES ${BISON_DCParser_OUTPUTS} ${FLEX_DCLexer_OUTPUTS})
+    list(APPEND DC_PARSER_INCLUDE_DIRS "${DC_GENERATED_DIR}")
+else()
+    list(APPEND DC_PARSER_SOURCES file/parser.cpp file/lexer.cpp)
+endif()
 
 add_library(dclass
-	# Helper Classes
-	util/PrimeNumberGenerator.cpp
-	util/HashGenerator.cpp
-
-	# Distributed Object Model
-	dc/DistributedType.cpp
-	dc/NumericType.cpp
-	dc/ArrayType.cpp
-	dc/Struct.cpp
-	dc/Class.cpp
-	dc/Method.cpp
-
-	dc/KeywordList.cpp
-	dc/File.cpp
-	dc/Field.cpp
-	dc/MolecularField.cpp
-	dc/Parameter.cpp
-
-	# File and Network I/O
-	file/parser.cpp
-	file/lexer.cpp
-	file/write.cpp
-	file/read.cpp
-	file/hash_legacy.cpp
-	value/format.cpp
-	value/parse.cpp
-	value/default.cpp
+    util/PrimeNumberGenerator.cpp
+    util/HashGenerator.cpp
+    dc/DistributedType.cpp
+    dc/NumericType.cpp
+    dc/ArrayType.cpp
+    dc/Struct.cpp
+    dc/Class.cpp
+    dc/Method.cpp
+    dc/KeywordList.cpp
+    dc/File.cpp
+    dc/Field.cpp
+    dc/MolecularField.cpp
+    dc/Parameter.cpp
+    ${DC_PARSER_SOURCES}
+    file/write.cpp
+    file/read.cpp
+    file/hash_legacy.cpp
+    value/format.cpp
+    value/parse.cpp
+    value/default.cpp
 )
-set_target_properties(dclass PROPERTIES LINK_FLAGS -lfl)
 
-# Workaround for Flex bug #140:
+target_include_directories(dclass PUBLIC
+    ${DC_PARSER_INCLUDE_DIRS}
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
 if(NOT MSVC)
-	set_source_files_properties(file/lexer.cpp PROPERTIES COMPILE_FLAGS -Wno-sign-compare)
+    set_source_files_properties(${DC_PARSER_SOURCES} PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare")
 endif()

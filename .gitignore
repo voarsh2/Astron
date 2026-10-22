@@ -10,3 +10,6 @@ Makefile
 .DS_Store
 build/
 !build/.keep
+__pycache__/
+.pytest_cache/
+.venv/

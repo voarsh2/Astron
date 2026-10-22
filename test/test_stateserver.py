@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 import unittest, time
 from common.unittests import ProtocolTest
 from common.astron import *
@@ -48,7 +48,7 @@ class TestStateServer(ProtocolTest):
 
         cls.conn_pool = []
         cls.conn_used = []
-        for x in xrange(CONN_POOL_SIZE):
+        for x in range(CONN_POOL_SIZE):
             cls.conn_pool.append(ChannelConnection('127.0.0.1', 57123))
 
     @classmethod
@@ -85,7 +85,7 @@ class TestStateServer(ProtocolTest):
         children = self.connect(PARENT_PREFIX|101000000)
 
         # Repeat tests twice to verify doids can be reused
-        for x in xrange(2):
+        for x in range(2):
 
             ### Test for CreateRequired with a required value ###
             # Create a DistributedTestObject1...
@@ -93,7 +93,7 @@ class TestStateServer(ProtocolTest):
 
             # The parent is expecting two messages...
             received = False
-            for x in xrange(2):
+            for x in range(2):
                 dg = parent.recv_maybe()
                 self.assertTrue(dg is not None, msg="Parent did not receive ChangingLocation and/or GetAI")
                 dgi = DatagramIterator(dg)
@@ -101,11 +101,11 @@ class TestStateServer(ProtocolTest):
                 # The object should tell the parent its arriving...
                 if dgi.matches_header([5000], 5, STATESERVER_OBJECT_CHANGING_LOCATION)[0]:
                     received = True
-                    self.assertEquals(dgi.read_doid(), 101000000) # Id
-                    self.assertEquals(dgi.read_doid(), 5000) # New parent
-                    self.assertEquals(dgi.read_zone(), 1500) # New zone
-                    self.assertEquals(dgi.read_doid(), INVALID_DO_ID) # Old parent
-                    self.assertEquals(dgi.read_zone(), INVALID_ZONE) # Old zone
+                    self.assertEqual(dgi.read_doid(), 101000000) # Id
+                    self.assertEqual(dgi.read_doid(), 5000) # New parent
+                    self.assertEqual(dgi.read_zone(), 1500) # New zone
+                    self.assertEqual(dgi.read_doid(), INVALID_DO_ID) # Old parent
+                    self.assertEqual(dgi.read_zone(), INVALID_ZONE) # Old zone
                 # .. and ask it for its AI, which we're not testing here and can ignore
                 elif dgi.matches_header([5000], 101000000, STATESERVER_OBJECT_GET_AI)[0]:
                     continue
@@ -321,7 +321,7 @@ class TestStateServer(ProtocolTest):
 
         # The first object is expecting two messages from the child...
         context = None
-        for x in xrange(2):
+        for x in range(2):
             dg = obj1.recv_maybe()
             self.assertTrue(dg is not None, "Parent did not receive ChangingLocation and/or GetAI")
             dgi = DatagramIterator(dg)
@@ -380,7 +380,7 @@ class TestStateServer(ProtocolTest):
 
         # The first object is expecting two messages from the child...
         context = None
-        for x in xrange(2):
+        for x in range(2):
             dg = obj1.recv_maybe()
             self.assertTrue(dg is not None, "Parent did not receive ChangingLocation and/or GetAI")
             dgi = DatagramIterator(dg)

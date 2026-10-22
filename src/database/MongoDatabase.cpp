@@ -17,7 +17,6 @@
 #include <bsoncxx/types.hpp>
 #include <bsoncxx/types/value.hpp>
 #include <mongocxx/instance.hpp>
-#include <mongocxx/uri.hpp>
 #include <mongocxx/client.hpp>
 #include <mongocxx/exception/operation_exception.hpp>
 #include <mongocxx/exception/logic_error.hpp>
@@ -107,7 +106,7 @@ static void bamboo2bson(single_context builder,
     case dclass::Type::T_CHAR: {
         unsigned char c = dgi.read_uint8();
         string str(1, c);
-        builder << b_utf8 {str};
+        builder << b_string {str};
     }
     break;
     case dclass::Type::T_FLOAT32: {
@@ -121,11 +120,11 @@ static void bamboo2bson(single_context builder,
     case dclass::Type::T_STRING: {
         vector<uint8_t> vec = dgi.read_data(type->get_size());
         string str((const char *)vec.data(), vec.size());
-        builder << b_utf8 {str};
+        builder << b_string {str};
     }
     break;
     case dclass::Type::T_VARSTRING: {
-        builder << b_utf8 {dgi.read_string()};
+        builder << b_string {dgi.read_string()};
     }
     break;
     case dclass::Type::T_BLOB: {
@@ -231,7 +230,7 @@ static void bamboo2bson(single_context builder,
     }
 }
 
-template<typename T> T handle_bson_number(const bsoncxx::types::value &value)
+template<typename T> T handle_bson_number(const bsoncxx::types::bson_value::view &value)
 {
     int64_t i;
     double d;
@@ -290,7 +289,7 @@ template<typename T> T handle_bson_number(const bsoncxx::types::value &value)
 
 static void bson2bamboo(const dclass::DistributedType *type,
                         const string &field_name,
-                        const bsoncxx::types::value &value,
+                        const bsoncxx::types::bson_value::view &value,
                         Datagram &dg)
 {
     try {
@@ -328,10 +327,10 @@ static void bson2bamboo(const dclass::DistributedType *type,
         }
         break;
         case dclass::Type::T_CHAR: {
-            if(value.type() != bsoncxx::type::k_utf8 || value.get_utf8().value.size() != 1) {
+            if(value.type() != bsoncxx::type::k_string || value.get_string().value.size() != 1) {
                 throw ConversionException("Expected single-length string for char field");
             }
-            dg.add_uint8(value.get_utf8().value[0]);
+            dg.add_uint8(value.get_string().value[0]);
         }
         break;
         case dclass::Type::T_FLOAT32: {
@@ -343,18 +342,18 @@ static void bson2bamboo(const dclass::DistributedType *type,
         }
         break;
         case dclass::Type::T_STRING: {
-            if(value.type() != bsoncxx::type::k_utf8) {
+            if(value.type() != bsoncxx::type::k_string) {
                 throw ConversionException("Expected string");
             }
-            string str = value.get_utf8().value.to_string();
+            string str(value.get_string().value.data(), value.get_string().value.size());
             dg.add_data(str);
         }
         break;
         case dclass::Type::T_VARSTRING: {
-            if(value.type() != bsoncxx::type::k_utf8) {
+            if(value.type() != bsoncxx::type::k_string) {
                 throw ConversionException("Expected string");
             }
-            string str = value.get_utf8().value.to_string();
+            string str(value.get_string().value.data(), value.get_string().value.size());
             dg.add_string(str);
         }
         break;
@@ -798,7 +797,8 @@ class MongoDatabase : public DatabaseBackend
         // run verify_class so that we know the frontend is happy with what
         // kind of object we just modified.)
         auto obj_v = obj->view();
-        string dclass_name = obj_v["dclass"].get_utf8().value.to_string();
+        auto dclass_value = obj_v["dclass"].get_string().value;
+        string dclass_name(dclass_value.data(), dclass_value.size());
         const dclass::Class *dclass = g_dcf->get_class_by_name(dclass_name);
         if(!dclass) {
             m_log->error() << "Encountered unknown database object: "
@@ -841,7 +841,8 @@ class MongoDatabase : public DatabaseBackend
         m_log->trace() << "Formatting database snapshot of " << doid << ": "
                        << bsoncxx::to_json(obj) << endl;
 
-        string dclass_name = obj["dclass"].get_utf8().value.to_string();
+        auto dclass_value = obj["dclass"].get_string().value;
+        string dclass_name(dclass_value.data(), dclass_value.size());
         const dclass::Class *dclass = g_dcf->get_class_by_name(dclass_name);
         if(!dclass) {
             m_log->error() << "Encountered unknown database object: "
@@ -856,7 +857,7 @@ class MongoDatabase : public DatabaseBackend
 
         try {
             for(const auto &it : fields) {
-                string name = it.key().to_string();
+                string name(it.key());
                 const dclass::Field *field = dclass->get_field_by_name(name);
                 if(!field) {
                     m_log->warning() << "Encountered unexpected field " << name
