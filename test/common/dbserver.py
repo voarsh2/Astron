@@ -4,6 +4,18 @@ from common.dcfile import *
 CREATE_DOID_OFFSET = 1 + (CHANNEL_SIZE_BYTES * 2) + 2 + 4
 
 class DBServerTestsuite(object):
+    def expectNoBroadcast(self, sender, doid):
+        """Drain prior database output on the observer connection with a marker."""
+        self._broadcast_barrier_id = getattr(self, '_broadcast_barrier_id', 0) + 1
+        marker = Datagram.create([DATABASE_PREFIX | doid], sender, RESERVED_MSG_TYPE)
+        marker.add_uint32(self._broadcast_barrier_id)
+
+        # Database broadcasts are emitted before their operation response. Once
+        # that response has been read, this marker follows those broadcasts
+        # through the Message Director to the same observer stream.
+        self.conn.send(marker)
+        self.expect(self.objects, marker)
+
     def createTypeGetId(self, sender, context, type):
         # Create object of type
         dg = Datagram.create([75757], sender, DBSERVER_CREATE_OBJECT)
@@ -306,7 +318,7 @@ class DBServerTestsuite(object):
 
         # Update shouldn't store ram fields
         assert_no_change(3)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(50, doid)
 
         # Update object with multiple ram fields
         dg = Datagram.create([75757], 50, DBSERVER_OBJECT_SET_FIELDS)
@@ -320,7 +332,7 @@ class DBServerTestsuite(object):
 
         # Update shouldn't store ram fields
         assert_no_change(4)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(50, doid)
 
         # Update if equals with a ram field
         dg = Datagram.create([75757], 50, DBSERVER_OBJECT_SET_FIELDS_IF_EQUALS)
@@ -340,7 +352,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(5) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(50, doid)
 
         # Update shouldn't store ram fields, are update non-ram fields
         assert_no_change(6)
@@ -365,7 +377,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(7) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(50, doid)
 
         # Update shouldn't store ram fields, are update non-ram fields
         assert_no_change(8)
@@ -562,7 +574,7 @@ class DBServerTestsuite(object):
         self.expect(self.conn, dg)
 
         # Expect no broadcast
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(100, doid)
 
         # Select object
         dg = Datagram.create([75757], 100, DBSERVER_OBJECT_GET_FIELD)
@@ -659,7 +671,7 @@ class DBServerTestsuite(object):
         self.conn.flush()
 
         # Expect no broadcast
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(70, doid)
 
         # Comparison existing value to non existing value in update
         dg = Datagram.create([75757], 70, DBSERVER_OBJECT_SET_FIELD_IF_EQUALS)
@@ -677,7 +689,7 @@ class DBServerTestsuite(object):
         self.expect(self.conn, dg)
 
         # Expect no broadcast
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(70, doid)
 
         # Update object with partially empty values
         dg = Datagram.create([75757], 70, DBSERVER_OBJECT_SET_FIELDS_IF_EQUALS)
@@ -702,7 +714,7 @@ class DBServerTestsuite(object):
         self.expect(self.conn, dg)
 
         # Expect no broadcast
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(70, doid)
 
         # Set the empty value to an actual value
         dg = Datagram.create([75757], 70, DBSERVER_OBJECT_SET_FIELD)
@@ -1163,7 +1175,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(2) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(100, doid)
 
         ### TEST REQUESTING NON-BELONGING FIELDS ###
         # Select two fields, one of which does not belong:
@@ -1203,7 +1215,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(4) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.expectNone(self.objects)
+        self.expectNoBroadcast(100, doid)
 
         ### TEST CREATING AN OBJECT WITH NON-BELONGING FIELDS ###
         # Create a DTO3 with field setFoo (which doesn't belong):

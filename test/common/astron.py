@@ -32,31 +32,41 @@ class Daemon(object):
             args += ["--loglevel", os.environ['USE_LOGLEVEL']]
         args += [self.config_file]
 
-        self.daemon = subprocess.Popen(args)
+        try:
+            self.daemon = subprocess.Popen(args)
 
-        deadline = time.monotonic() + 30.0
-        while time.monotonic() < deadline:
-            if self.daemon.poll() is not None:
-                raise RuntimeError(
-                    'Astron exited during startup with status %d' % self.daemon.returncode
-                )
-            try:
-                with socket.create_connection(('127.0.0.1', 57123), timeout=0.1):
-                    return
-            except OSError:
-                # This interval only backs off readiness polling; startup is
-                # complete when the Message Director accepts a connection.
-                time.sleep(0.01)
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                if self.daemon.poll() is not None:
+                    raise RuntimeError(
+                        'Astron exited during startup with status %d' % self.daemon.returncode
+                    )
+                try:
+                    with socket.create_connection(('127.0.0.1', 57123), timeout=0.1):
+                        return
+                except OSError:
+                    # This interval only backs off readiness polling; startup is
+                    # complete when the Message Director accepts a connection.
+                    time.sleep(0.01)
 
-        raise RuntimeError('Message Director did not become ready within 30 seconds')
+            raise RuntimeError('Message Director did not become ready within 30 seconds')
+        except BaseException:
+            self.stop()
+            raise
 
     def stop(self):
         if self.daemon is not None:
-            self.daemon.kill()
+            if self.daemon.poll() is None:
+                self.daemon.kill()
             # In Windows, kill() is an alias for terminate(), which isn't guaranteed to be instantaneous like SIGKILL signals are on UNIX systems.
             self.daemon.wait()
+            self.daemon = None
         if self.config_file is not None:
-            os.remove(self.config_file)
+            try:
+                os.remove(self.config_file)
+            except FileNotFoundError:
+                pass
+            self.config_file = None
 
 DATATYPES = {
     'int8': '<b',
@@ -567,7 +577,7 @@ class MDConnection(object):
                 if not data:
                     raise EOFError('Remote socket closed connection')
                 self._recv_buffer.extend(data)
-        except socket.timeout:
+        except (socket.timeout, BlockingIOError):
             return None
         except ConnectionError as error:
             # Winsock may report an aborted/reset peer as an error instead of
