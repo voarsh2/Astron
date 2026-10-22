@@ -88,6 +88,7 @@ jobs:
           brew update
           brew install bison flex ninja boost libuv yaml-cpp mongo-cxx-driver
           brew tap mongodb/brew
+          brew trust --formula mongodb/brew/mongodb-community@8.0
           brew install mongodb-community@8.0
           {
             echo "$(brew --prefix bison)/bin"
