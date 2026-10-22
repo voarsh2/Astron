@@ -545,9 +545,9 @@ class MDConnection(object):
         while self._read(): pass
 
     def _recv(self, length):
-        if hasattr(socket, 'MSG_WAITALL'):
-            return self.s.recv(length, socket.MSG_WAITALL)
-
+        # _read() accumulates partial frames itself. MSG_WAITALL is not
+        # supported by Winsock for sockets in timeout mode, which Python
+        # implements using non-blocking sockets.
         return self.s.recv(length)
 
     def _read(self):
@@ -567,8 +567,12 @@ class MDConnection(object):
                 if not data:
                     raise EOFError('Remote socket closed connection')
                 self._recv_buffer.extend(data)
-        except socket.error:
+        except socket.timeout:
             return None
+        except ConnectionError as error:
+            # Winsock may report an aborted/reset peer as an error instead of
+            # returning an empty read, which is the usual EOF signal.
+            raise EOFError('Remote socket closed connection') from error
 
         datagram = bytes(self._recv_buffer[header_size:frame_size])
         del self._recv_buffer[:frame_size]
