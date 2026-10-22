@@ -40,6 +40,7 @@ def deleteObject(conn, sender, doid):
     conn.send(dg)
 
 CONN_POOL_SIZE = 8
+CHANNEL_BARRIER_DOID = 0xFFFFFFFE
 class TestStateServer(ProtocolTest):
     @classmethod
     def setUpClass(cls):
@@ -48,12 +49,26 @@ class TestStateServer(ProtocolTest):
 
         cls.conn_pool = []
         cls.conn_used = []
+        cls.next_barrier_channel = 0x7FFFFFFFFFFFF000
+        cls.next_barrier_context = 0
         for x in range(CONN_POOL_SIZE):
             cls.conn_pool.append(ChannelConnection('127.0.0.1', 57123))
 
+        # A real State Server response is the acknowledgement: the Message
+        # Director processes each connection's channel updates before its next
+        # datagram, so this confirms subscription changes before tests use them.
+        conn = cls.conn_pool.pop()
+        barrier_channel = cls.next_barrier_channel
+        cls.next_barrier_channel += 1
+        conn.add_channel(barrier_channel)
+        createEmptyDTO1(conn, barrier_channel, CHANNEL_BARRIER_DOID)
+        cls.wait_for_channel_barrier(conn)
+        conn.remove_channel(barrier_channel)
+        cls.conn_pool.append(conn)
+
     @classmethod
     def tearDownClass(cls):
-        for conn in cls.conn_used:
+        for conn in list(cls.conn_used):
             cls.disconnect(conn)
         for conn in cls.conn_pool:
             conn.close()
@@ -64,17 +79,55 @@ class TestStateServer(ProtocolTest):
         conn = cls.conn_pool.pop()
         conn.add_channel(channel)
         cls.conn_used.append(conn)
+        cls.wait_for_channel_barrier(conn)
         return conn
+
+    @classmethod
+    def wait_for_channel_barrier(cls, conn):
+        barrier_channel = cls.next_barrier_channel
+        cls.next_barrier_channel += 1
+        context = cls.next_barrier_context
+        cls.next_barrier_context += 1
+        conn.add_channel(barrier_channel)
+
+        request = Datagram.create([CHANNEL_BARRIER_DOID], barrier_channel,
+                                  STATESERVER_OBJECT_GET_LOCATION)
+        request.add_uint32(context)
+        conn.send(request)
+
+        expected = Datagram.create([barrier_channel], CHANNEL_BARRIER_DOID,
+                                   STATESERVER_OBJECT_GET_LOCATION_RESP)
+        expected.add_uint32(context)
+        appendMeta(expected, CHANNEL_BARRIER_DOID, 0, 0)
+
+        deadline = time.monotonic() + cls.RESPONSE_TIMEOUT
+        timeout = conn.s.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise AssertionError("Timed out waiting for channel registration barrier.")
+                conn.s.settimeout(remaining)
+                received = conn.recv_maybe()
+                if received is None:
+                    raise AssertionError("Timed out waiting for State Server channel barrier.")
+                if received.matches(expected):
+                    break
+                # Drain earlier notifications until this ordered acknowledgement arrives.
+        finally:
+            conn.s.settimeout(timeout)
+
+        conn.remove_channel(barrier_channel)
 
     @classmethod
     def disconnect(cls, conn):
         conn.clear_channels()
-        conn.flush()
+        cls.wait_for_channel_barrier(conn)
         cls.conn_used.remove(conn)
         cls.conn_pool.append(conn)
 
     def flush_failed(self):
-        for conn in self.conn_used:
+        for conn in list(self.conn_used):
             self.disconnect(conn)
 
     # Tests CREATE_OBJECT_WITH_REQUIRED and OBJECT_DELETE_RAM
@@ -1152,29 +1205,48 @@ class TestStateServer(ProtocolTest):
         # Create an object...
         createEmptyDTO1(conn, 5, 201, 62222, 125, 6789)
 
+        # Wait for creation to finish before issuing AI operations. The
+        # location entry can otherwise arrive after the negative assertion
+        # below and look like a response to the wrong-AI reset.
+        dg = Datagram.create([62222<<ZONE_SIZE_BITS|125], 201,
+                             STATESERVER_OBJECT_ENTER_LOCATION_WITH_REQUIRED)
+        appendMeta(dg, 201, 62222, 125, DistributedTestObject1)
+        dg.add_uint32(6789)
+        self.expect(conn, dg)
+
         # ... with an AI channel...
         dg = Datagram.create([201], 5, STATESERVER_OBJECT_SET_AI)
         dg.add_channel(31337)
         conn.send(dg)
-
-        # Ignore any noise...
-        conn.flush()
 
         # Now let's try hitting the SS with a reset for the wrong AI:
         dg = Datagram.create([100100], 5, STATESERVER_DELETE_AI_OBJECTS)
         dg.add_channel(41337)
         conn.send(dg)
 
-        # Nothing should happen:
-        self.expectNone(conn)
+        # A response to a query sent after the reset proves that the object
+        # survived it and retained its AI channel. This is a protocol barrier,
+        # unlike checking for silence before the reset has been processed.
+        dg = Datagram.create([201], 62222<<ZONE_SIZE_BITS|125,
+                             STATESERVER_OBJECT_GET_AI)
+        dg.add_uint32(1)
+        conn.send(dg)
+        dg = Datagram.create([62222<<ZONE_SIZE_BITS|125], 201,
+                             STATESERVER_OBJECT_GET_AI_RESP)
+        dg.add_uint32(1)
+        dg.add_doid(201)
+        dg.add_channel(31337)
+        self.expect(conn, dg)
 
         # Now the correct AI:
-        dg = Datagram.create([100100], 5, STATESERVER_DELETE_AI_OBJECTS)
+        # Use a different sender so a delayed response to the wrong-AI reset
+        # cannot satisfy the expected deletion below.
+        dg = Datagram.create([100100], 6, STATESERVER_DELETE_AI_OBJECTS)
         dg.add_channel(31337)
         conn.send(dg)
 
         # Then object should die:
-        dg = Datagram.create([62222<<ZONE_SIZE_BITS|125, 31337], 5, STATESERVER_OBJECT_DELETE_RAM)
+        dg = Datagram.create([62222<<ZONE_SIZE_BITS|125, 31337], 6, STATESERVER_OBJECT_DELETE_RAM)
         dg.add_doid(201)
         self.expect(conn, dg)
 
@@ -1721,6 +1793,7 @@ class TestStateServer(ProtocolTest):
     def test_get_zones_objects(self):
         self.flush_failed()
         conn = self.connect(5)
+        observer = self.connect(0x7FFFFFFE)
 
         doid0 = 1000 # Root object
         doid1 = 2001
@@ -1732,9 +1805,6 @@ class TestStateServer(ProtocolTest):
 
         # Convenience function:
         def checkObjects(objects, zones):
-            # Mitigate race condition - allow SS time to process recent changes
-            time.sleep(0.1)
-
             # 1. Send query:
             dg = Datagram.create([doid0], 5, STATESERVER_OBJECT_GET_ZONES_OBJECTS)
             dg.add_uint32(0xF337) # Context
@@ -1765,15 +1835,92 @@ class TestStateServer(ProtocolTest):
             # Shouldn't receive messages from any of the other objects
             self.expectNone(conn)
 
+        def observeObject(doid):
+            # Subscribe before creation so the observer sees the parent's
+            # LOCATION_ACK on the child's channel.
+            observer.add_channel(doid)
+            self.__class__.wait_for_channel_barrier(observer)
+
+        def stopObservingObject(doid):
+            observer.remove_channel(doid)
+
+        def waitForLocationAck(parent, child, zone, expect_ai_response=False):
+            # This ACK proves the parent indexed the child; the same routed
+            # datagram reaches the child before the director handles later queries.
+            ack = Datagram.create([child], parent, STATESERVER_OBJECT_LOCATION_ACK)
+            ack.add_doid(parent)
+            ack.add_zone(zone)
+
+            ai_response = Datagram.create([child], parent, STATESERVER_OBJECT_GET_AI_RESP)
+            ai_response.add_uint32(0)
+            ai_response.add_doid(parent)
+            ai_response.add_channel(0)
+
+            got_ack = False
+            got_ai_response = not expect_ai_response
+            while not got_ack or not got_ai_response:
+                received = self.recv_expected(observer)
+                if received is None:
+                    self.fail("Timed out waiting for State Server location synchronization.")
+                if received.matches(ack):
+                    got_ack = True
+                elif received.matches(ai_response):
+                    got_ai_response = True
+                else:
+                    self.assertDatagramsEqual(ack, received)
+
+        def createChild(doid, parent, zone):
+            observeObject(doid)
+            createEmptyDTO1(conn, 5, doid, parent, zone)
+            waitForLocationAck(parent, doid, zone, expect_ai_response=True)
+            stopObservingObject(doid)
+
+        def moveChild(doid, parent, zone, ai_context=None):
+            observeObject(doid)
+
+            request = Datagram.create([doid], 5, STATESERVER_OBJECT_SET_LOCATION)
+            appendMeta(request, parent=parent, zone=zone)
+            conn.send(request)
+
+            ack = Datagram.create([doid], parent, STATESERVER_OBJECT_LOCATION_ACK)
+            ack.add_doid(parent)
+            ack.add_zone(zone)
+
+            ai_response = Datagram.create([doid], parent, STATESERVER_OBJECT_GET_AI_RESP)
+            if ai_context is not None:
+                ai_response.add_uint32(ai_context)
+                ai_response.add_doid(parent)
+                ai_response.add_channel(0)
+
+            got_request = False
+            got_ack = False
+            got_ai_response = ai_context is None
+            while not got_request or not got_ack or not got_ai_response:
+                received = self.recv_expected(observer)
+                if received is None:
+                    self.fail("Timed out waiting for State Server location synchronization.")
+                if received.matches(request):
+                    got_request = True
+                elif received.matches(ack):
+                    got_ack = True
+                elif ai_context is not None and received.matches(ai_response):
+                    got_ai_response = True
+                else:
+                    self.assertDatagramsEqual(ack, received)
+
+            stopObservingObject(doid)
+
         ### Test for GetZonesObjects ###
-        # Make a bunch of objects
+        # Create the objects and wait for each parent's location acknowledgement.
+        # This proves the parent indexed each child and the child processed its
+        # acknowledgement before the zone queries below.
         createEmptyDTO1(conn, 5, doid0)
-        createEmptyDTO1(conn, 5, doid1, doid0, 912)
-        createEmptyDTO1(conn, 5, doid2, doid0, 912)
-        createEmptyDTO1(conn, 5, doid3, doid0, 930)
-        createEmptyDTO1(conn, 5, doid4, doid0, 940)
-        createEmptyDTO1(conn, 5, doid5, doid0, 950)
-        createEmptyDTO1(conn, 5, doid6, doid1, 860)
+        createChild(doid1, doid0, 912)
+        createChild(doid2, doid0, 912)
+        createChild(doid3, doid0, 930)
+        createChild(doid4, doid0, 940)
+        createChild(doid5, doid0, 950)
+        createChild(doid6, doid1, 860)
 
         # Ask for objects from some of the zones...
         checkObjects([(doid1, 912), (doid2, 912), (doid3, 930)], [912, 930])
@@ -1781,21 +1928,27 @@ class TestStateServer(ProtocolTest):
         ### Test for proper updating ###
 
         # Let's move doid4 in there:
-        dg = Datagram.create([doid4], 5, STATESERVER_OBJECT_SET_LOCATION)
-        appendMeta(dg, parent=doid0, zone=930)
-        conn.send(dg)
+        moveChild(doid4, doid0, 930)
 
         checkObjects([(doid1, 912), (doid2, 912), (doid3, 930), (doid4, 930)], [912, 930])
 
         # Delete doid2:
+        observer.add_channel(doid0)
+        self.__class__.wait_for_channel_barrier(observer)
         deleteObject(conn, 5, doid2)
+        deleted = Datagram.create([doid0], 5, STATESERVER_OBJECT_CHANGING_LOCATION)
+        appendMeta(deleted, doid2)
+        appendMeta(deleted, parent=INVALID_DO_ID, zone=INVALID_ZONE)
+        appendMeta(deleted, parent=doid0, zone=912)
+        self.expect(observer, deleted)
+        observer.remove_channel(doid0)
         checkObjects([(doid1, 912), (doid3, 930), (doid4, 930)], [912, 930])
 
         # Move doid3 away:
-        dg = Datagram.create([doid3], 5, STATESERVER_OBJECT_SET_LOCATION)
-        appendMeta(dg, parent=doid1, zone=930)
-        conn.send(dg)
+        moveChild(doid3, doid1, 930, ai_context=1)
         checkObjects([(doid1, 912), (doid4, 930)], [912, 930])
+
+        self.disconnect(observer)
 
         ### Test for proper OBJECT_LOCATION_ACK behavior ###
 
@@ -1938,23 +2091,60 @@ class TestStateServer(ProtocolTest):
         doid1 = 2000
         doid2 = 2001
 
-        # create a tree
+        # Subscribe before creating children so their location acknowledgements
+        # provide a protocol barrier for the active-zone query.
+        conn.add_channel(doid1)
+        conn.add_channel(doid2)
+        self.__class__.wait_for_channel_barrier(conn)
+
+        # Create the root and query it to confirm the State Server has processed it.
         createEmptyDTO1(conn, 5, doid0)
-        createEmptyDTO1(conn, 5, doid1, doid0, 1234)
-        createEmptyDTO1(conn, 5, doid2, doid0, 1337)
+        self.__class__.wait_for_channel_barrier(conn)
 
-        time.sleep(0.3)
+        def checkActiveZones(zones):
+            dg = Datagram.create([doid0], 5, STATESERVER_GET_ACTIVE_ZONES)
+            dg.add_uint32(0)
+            conn.send(dg)
 
-        dg = Datagram.create([doid0], 5, STATESERVER_GET_ACTIVE_ZONES)
-        dg.add_uint32(0)
-        conn.send(dg)
+            response = Datagram.create([5], doid0, STATESERVER_GET_ACTIVE_ZONES_RESP)
+            response.add_uint32(0)
+            response.add_uint16(len(zones))
+            for zone in zones:
+                response.add_zone(zone)
+            self.expect(conn, response)
 
-        dg = Datagram.create([5], doid0, STATESERVER_GET_ACTIVE_ZONES_RESP)
-        dg.add_uint32(0)
-        dg.add_uint16(2)
-        dg.add_zone(1234)
-        dg.add_zone(1337)
-        self.expect(conn, dg)
+        checkActiveZones([])
+
+        def createChild(doid, zone):
+            createEmptyDTO1(conn, 5, doid, doid0, zone)
+
+            ack = Datagram.create([doid], doid0, STATESERVER_OBJECT_LOCATION_ACK)
+            ack.add_doid(doid0)
+            ack.add_zone(zone)
+            ai_response = Datagram.create(
+                [doid], doid0, STATESERVER_OBJECT_GET_AI_RESP
+            )
+            ai_response.add_uint32(0)
+            ai_response.add_doid(doid0)
+            ai_response.add_channel(0)
+
+            got_ack = False
+            got_ai_response = False
+            while not got_ack or not got_ai_response:
+                received = self.recv_expected(conn)
+                if received is None:
+                    self.fail("Timed out waiting for active-zone child synchronization.")
+                if received.matches(ack):
+                    got_ack = True
+                elif received.matches(ai_response):
+                    got_ai_response = True
+                else:
+                    self.assertDatagramsEqual(ack, received)
+
+        createChild(doid1, 1234)
+        createChild(doid2, 1337)
+
+        checkActiveZones([1234, 1337])
 
         ### Cleanup ###
         deleteObject(conn, 5, doid0)

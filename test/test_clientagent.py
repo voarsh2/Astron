@@ -82,6 +82,8 @@ roles:
 VERSION = 'Sword Art Online v5.1'
 
 class TestClientAgent(ProtocolTest):
+    next_sync_context = 0xCA000000
+
     @classmethod
     def setUpClass(cls):
         cls.daemon = Daemon(CONFIG)
@@ -96,17 +98,25 @@ class TestClientAgent(ProtocolTest):
         cls.daemon.stop()
 
     def assertDisconnect(self, s, reason_code):
-        while True:
-            dg = s.recv_maybe()
-            self.assertTrue(dg is not None, "No datagram received while expecting ClientEject")
-            dgi = DatagramIterator(dg)
-            if dgi.read_uint16() == CLIENT_EJECT:
-                self.assertEqual(dgi.read_uint16(), reason_code)
-                # According to client_protocol.md, the string must provide some explanation, so
-                # ensure that it is there.
-                self.assertNotEqual(dgi.read_string(), '')
-                s.close()
-                return
+        deadline = time.monotonic() + self.RESPONSE_TIMEOUT
+        timeout = s.s.gettimeout()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                self.assertGreater(remaining, 0, "Timed out waiting for ClientEject")
+                s.s.settimeout(remaining)
+                dg = s.recv_maybe()
+                self.assertTrue(dg is not None, "No datagram received while expecting ClientEject")
+                dgi = DatagramIterator(dg)
+                if dgi.read_uint16() == CLIENT_EJECT:
+                    self.assertEqual(dgi.read_uint16(), reason_code)
+                    # According to client_protocol.md, the string must provide some explanation, so
+                    # ensure that it is there.
+                    self.assertNotEqual(dgi.read_string(), '')
+                    break
+        finally:
+            s.s.settimeout(timeout)
+        s.close()
 
     def connect(self, do_hello=True, port=57128, tls_opts=None, proxy_header=None):
         s = socket(AF_INET, SOCK_STREAM)
@@ -156,10 +166,34 @@ class TestClientAgent(ProtocolTest):
         return sender_id
 
     def set_state(self, client, state):
-        dg = Datagram.create([self.identify(client, ignore_id = True)], 1, CLIENTAGENT_SET_STATE)
+        client_id = self.identify(client, ignore_id=True)
+        dg = Datagram.create([client_id], 1, CLIENTAGENT_SET_STATE)
         dg.add_uint16(state)
         self.server.send(dg)
-        time.sleep(0.1) # Mitigate race condition with set_state
+        self.synchronize_clientagent(client_id)
+
+    def synchronize_clientagent(self, client_id):
+        # A response from the ClientAgent fences earlier controls sent on this
+        # Message Director connection, including commands that have no reply.
+        context = self.__class__.next_sync_context
+        self.__class__.next_sync_context += 1
+
+        request = Datagram.create(
+            [client_id], 1234, CLIENTAGENT_GET_NETWORK_ADDRESS
+        )
+        request.add_uint32(context)
+        self.server.send(request)
+
+        response = self.recv_expected(self.server)
+        self.assertIsNotNone(
+            response, "ClientAgent did not answer the synchronization request."
+        )
+        dgi = DatagramIterator(response)
+        matches, reason = dgi.matches_header(
+            [1234], client_id, CLIENTAGENT_GET_NETWORK_ADDRESS_RESP
+        )
+        self.assertTrue(matches, reason)
+        self.assertEqual(dgi.read_uint32(), context)
 
     def test_hello(self):
         self.server.flush()
@@ -994,8 +1028,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_string(pr3.get_data())
         self.server.send(dg)
 
-        #Wait
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client suddenly loses connection...!
         client.close()
@@ -1181,6 +1214,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(1000) # Interest id
         dg.add_doid(1234) # Parent
         dg.add_zone(4321) # Zone
+        interest_started = time.monotonic()
         client.send(dg)
 
         # The same N.B. in test_interest applies here
@@ -1217,10 +1251,11 @@ class TestClientAgent(ProtocolTest):
         # The CA should buffer the entry of 8888...
         self.expectNone(client)
 
-        # Now, nothing happens for 750 ms
-        time.sleep(0.75)
-
-        # Interest timeout (500ms) should've hit, so the interest should've been closed.
+        # The interest timeout is 500ms from the add request. Wait on the
+        # client socket for the remainder of that interval, then wait for the
+        # timeout's actual delivery below.
+        quiet_for = max(0, 0.45 - (time.monotonic() - interest_started))
+        self.expectNoneFor(client, quiet_for)
 
         # We should hear about 8888...
         dg = Datagram()
@@ -2697,8 +2732,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and get disconnected because we're not authenticate
         dg = Datagram()
@@ -2722,8 +2756,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and everything should run fine
         dg = Datagram()
@@ -2745,8 +2778,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10000) # doid
         self.server.send(dg)
 
-        # Mitigate race condition with undeclare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Twiddle with the object, and get disconnected because its not declared
         dg = Datagram()
@@ -2785,8 +2817,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(setBR1)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable and declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Try a SetField
         dg = Datagram()
@@ -2811,8 +2842,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(setRequired1)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Make sure setRequired1 is still sendable
         dg = Datagram()
@@ -2854,8 +2884,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(bar)
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Try a SetField
         dg = Datagram()
@@ -2879,8 +2908,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(0) # num fields
         self.server.send(dg)
 
-        # Mitigate race condition with set_fields_sendable
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Trying to set the field should disconnect us then
         dg = Datagram()
@@ -3151,9 +3179,6 @@ class TestClientAgent(ProtocolTest):
         # Ignore the enter location and done interest response.
         client.flush()
 
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
-
         # Then change the object's location, out of interest, the client should be disconnected
         dg = Datagram.create([id], 10052, STATESERVER_OBJECT_CHANGING_LOCATION)
         dg.add_doid(10052)
@@ -3253,8 +3278,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10052) # doid
         self.server.send(dg)
 
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Then disconnect the client, and the object shouldn't die
         client.close()
@@ -3292,8 +3316,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_doid(10052) # doid
         self.server.send(dg)
 
-        # Wait a little bit to mitigate any potential race condition
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Then delete the object, the client should not be disconnected
         dg = Datagram.create([id], 10052, STATESERVER_OBJECT_DELETE_RAM)
@@ -3441,15 +3464,14 @@ class TestClientAgent(ProtocolTest):
         # First heartbeat:
         self.send_heartbeat(client)
 
-        #sleep for 2/4 of a second, still should be connected after this.
-        time.sleep(0.50)
+        # Keep the connection quiet through half the heartbeat timeout. This
+        # checks liveness by waiting on the socket rather than pausing the test.
+        self.expectNoneFor(client, 0.5)
 
         #Check for connection and send heartbeat
         self.server.send(dg)
         self.expect(client, raw_dg, isClient = True)
         self.send_heartbeat(client)
-
-        time.sleep(1.25)
 
         # We should be disconnected now...
         self.assertDisconnect(client,CLIENT_DISCONNECT_NO_HEARTBEAT)
@@ -3645,8 +3667,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3671,8 +3692,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3697,8 +3717,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3727,8 +3746,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Put the client in the ESTABLISHED state.
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -3755,8 +3773,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint16(DistributedClientTestObject) # dclass
         self.server.send(dg)
 
-        # Mitigate race condition with declare_object
-        time.sleep(0.1)
+        self.synchronize_clientagent(id)
 
         # Client needs to be outside of the sandbox for this:
         self.set_state(client, CLIENT_STATE_ESTABLISHED)

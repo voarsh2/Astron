@@ -34,10 +34,23 @@ class Daemon(object):
 
         self.daemon = subprocess.Popen(args)
 
-        time.sleep(1.0) # Allow some time for daemon to initialize...
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            if self.daemon.poll() is not None:
+                raise RuntimeError(
+                    'Astron exited during startup with status %d' % self.daemon.returncode
+                )
+            try:
+                with socket.create_connection(('127.0.0.1', 57123), timeout=0.1):
+                    return
+            except OSError:
+                # This interval only backs off readiness polling; startup is
+                # complete when the Message Director accepts a connection.
+                time.sleep(0.01)
+
+        raise RuntimeError('Message Director did not become ready within 30 seconds')
 
     def stop(self):
-        time.sleep(1.0) # Allow some time for daemon to finish up...
         if self.daemon is not None:
             self.daemon.kill()
             # In Windows, kill() is an alias for terminate(), which isn't guaranteed to be instantaneous like SIGKILL signals are on UNIX systems.
@@ -584,10 +597,8 @@ class ChannelConnection(MDConnection):
             self.channels.remove(channel)
 
     def clear_channels(self):
-        for channel in self.channels:
-            self.send(Datagram.create_remove_channel(channel))
-            self.channels.remove(channel)
-        self.channels = []
+        for channel in list(self.channels):
+            self.remove_channel(channel)
 
     def close(self):
         for chan in self.channels:

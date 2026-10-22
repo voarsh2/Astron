@@ -187,3 +187,15 @@ class ProtocolTest(unittest.TestCase):
         received = conn.recv_maybe()
         if received is not None:
             self.writeUnexpectedAndFail(received)
+
+    def expectNoneFor(self, conn, duration):
+        """Assert that a connection stays quiet for a defined interval."""
+        timeout = conn.s.gettimeout()
+        try:
+            conn.s.settimeout(duration)
+            received = conn.recv_maybe()
+        finally:
+            conn.s.settimeout(timeout)
+
+        if received is not None:
+            self.writeUnexpectedAndFail(received)

@@ -21,21 +21,17 @@ class DBServerTestsuite(object):
     def createGenericGetId(self, sender, context):
         return self.createTypeGetId(sender, context, DistributedTestObject1)
 
-    def deleteObject(self, sender, doid, check=False):
+    def deleteObject(self, sender, doid):
         dg = Datagram.create([75757], sender, DBSERVER_OBJECT_DELETE)
         dg.add_doid(doid)
         self.conn.send(dg)
 
-        if check:
-            dg = Datagram.create([DATABASE_PREFIX|doid], sender, DBSERVER_OBJECT_DELETE)
-            dg.add_doid(doid)
-            self.expect(self.objects, dg)
-        else:
-            self.objects.flush()
+        # Wait for this specific delete broadcast so it cannot leak into the next test.
+        dg = Datagram.create([DATABASE_PREFIX|doid], sender, DBSERVER_OBJECT_DELETE)
+        dg.add_doid(doid)
+        self.expect(self.objects, dg)
 
     def test_create_getall(self):
-        self.objects.flush()
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(20))
 
         doids = []
@@ -167,15 +163,13 @@ class DBServerTestsuite(object):
         self.conn.send(Datagram.create_remove_channel(20))
 
     def test_delete(self):
-        self.objects.flush()
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(30))
 
         # Create an object, get its doid
         doid = self.createGenericGetId(30, 1)
 
         # Delete the object
-        self.deleteObject(30, doid, True)
+        self.deleteObject(30, doid)
 
         # Check to make sure the object is deleted
         dg = Datagram.create([75757], 30, DBSERVER_OBJECT_GET_ALL)
@@ -194,7 +188,7 @@ class DBServerTestsuite(object):
         doidB = self.createGenericGetId(30, 4)
 
         # Delete object "A"
-        self.deleteObject(30, doidA, True)
+        self.deleteObject(30, doidA)
 
         # Check to make sure object "B" isn't affected
         dg = Datagram.create([75757], 30, DBSERVER_OBJECT_GET_ALL)
@@ -215,9 +209,6 @@ class DBServerTestsuite(object):
         self.conn.send(Datagram.create_remove_channel(30))
 
     def test_create_collisions(self):
-        self.objects.flush()
-        self.conn.flush()
-
         self.conn.send(Datagram.create_add_channel(40))
 
         doids = []
@@ -252,14 +243,11 @@ class DBServerTestsuite(object):
 
         # Cleanup
         self.deleteObject(40, doid)
-        self.deleteObject(40, doids[0])
         for do in doids:
             self.deleteObject(40, do)
         self.conn.send(Datagram.create_remove_channel(40))
 
     def test_ram(self):
-        self.objects.flush()
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(50))
 
         # Create a stored DistributedTestObject3 with actual values and non-db/ram values we don't care about...
@@ -315,10 +303,10 @@ class DBServerTestsuite(object):
         dg.add_uint16(setBR1)
         dg.add_string("(deep breath...) 'Yay...'")
         self.conn.send(dg)
-        self.objects.flush()
 
         # Update shouldn't store ram fields
         assert_no_change(3)
+        self.expectNone(self.objects)
 
         # Update object with multiple ram fields
         dg = Datagram.create([75757], 50, DBSERVER_OBJECT_SET_FIELDS)
@@ -329,10 +317,10 @@ class DBServerTestsuite(object):
         dg.add_uint16(setB1)
         dg.add_uint8(100)
         self.conn.send(dg)
-        self.objects.flush()
 
         # Update shouldn't store ram fields
         assert_no_change(4)
+        self.expectNone(self.objects)
 
         # Update if equals with a ram field
         dg = Datagram.create([75757], 50, DBSERVER_OBJECT_SET_FIELDS_IF_EQUALS)
@@ -352,7 +340,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(5) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.objects.flush()
+        self.expectNone(self.objects)
 
         # Update shouldn't store ram fields, are update non-ram fields
         assert_no_change(6)
@@ -377,7 +365,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(7) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
-        self.objects.flush()
+        self.expectNone(self.objects)
 
         # Update shouldn't store ram fields, are update non-ram fields
         assert_no_change(8)
@@ -387,8 +375,6 @@ class DBServerTestsuite(object):
         self.conn.send(Datagram.create_remove_channel(50))
 
     def test_set(self):
-        self.objects.flush()
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(60))
 
         # Create db object
@@ -506,7 +492,6 @@ class DBServerTestsuite(object):
         self.conn.send(Datagram.create_remove_channel(60))
 
     def test_set_if_empty(self):
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(100))
 
         # Create db object
@@ -726,8 +711,12 @@ class DBServerTestsuite(object):
         dg.add_string("Daddy... why did you eat my fries? I bought them... and they were mine.")
         self.conn.send(dg)
 
-        # Ignore set broadcast
-        self.objects.flush()
+        # Consume the preceding single-field update before the conditional update.
+        dg = Datagram.create([DATABASE_PREFIX|doid], 70, DBSERVER_OBJECT_SET_FIELD)
+        dg.add_doid(doid)
+        dg.add_uint16(setDb3)
+        dg.add_string("Daddy... why did you eat my fries? I bought them... and they were mine.")
+        self.expect(self.objects, dg)
 
         # Sanity check on set field
         dg = Datagram.create([75757], 70, DBSERVER_OBJECT_GET_ALL)
@@ -888,6 +877,11 @@ class DBServerTestsuite(object):
         dg.add_doid(doid)
         dg.add_uint16(setDb3)
         self.conn.send(dg)
+
+        dg = Datagram.create([DATABASE_PREFIX|doid], 80, DBSERVER_OBJECT_DELETE_FIELD)
+        dg.add_doid(doid)
+        dg.add_uint16(setDb3)
+        self.expect(self.objects, dg)
 
         # Select the cleared field
         dg = Datagram.create([75757], 80, DBSERVER_OBJECT_GET_FIELD)
@@ -1072,7 +1066,11 @@ class DBServerTestsuite(object):
         dg.add_doid(doidC)
         dg.add_uint16(setDb3)
         self.conn.send(dg)
-        self.objects.flush() # Ignore broadcast
+
+        dg = Datagram.create([DATABASE_PREFIX|doidC], 90, DBSERVER_OBJECT_DELETE_FIELD)
+        dg.add_doid(doidC)
+        dg.add_uint16(setDb3)
+        self.expect(self.objects, dg)
 
         dg = Datagram.create([75757], 90, DBSERVER_OBJECT_DELETE_FIELDS)
         dg.add_doid(doidC)
@@ -1152,7 +1150,6 @@ class DBServerTestsuite(object):
         dg.add_uint16(setFoo)
         dg.add_uint16(32112)
         self.conn.send(dg)
-        self.objects.flush()
 
         # Select the field
         dg = Datagram.create([75757], 100, DBSERVER_OBJECT_GET_FIELD)
@@ -1166,6 +1163,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(2) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
+        self.expectNone(self.objects)
 
         ### TEST REQUESTING NON-BELONGING FIELDS ###
         # Select two fields, one of which does not belong:
@@ -1192,7 +1190,6 @@ class DBServerTestsuite(object):
         dg.add_doid(doid)
         dg.add_uint16(setRDbD5)
         self.conn.send(dg)
-        self.objects.flush()
 
         # Select the field
         dg = Datagram.create([75757], 100, DBSERVER_OBJECT_GET_FIELD)
@@ -1206,6 +1203,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(4) # Context
         dg.add_uint8(FAILURE)
         self.expect(self.conn, dg)
+        self.expectNone(self.objects)
 
         ### TEST CREATING AN OBJECT WITH NON-BELONGING FIELDS ###
         # Create a DTO3 with field setFoo (which doesn't belong):
@@ -1232,7 +1230,6 @@ class DBServerTestsuite(object):
     def test_datatypes(self):
         # This uses a DistributedDBTypeTestObject and sets all of the various
         # fields.
-        self.conn.flush()
         self.conn.send(Datagram.create_add_channel(110))
 
         # Create a (valid) object.
@@ -1280,6 +1277,13 @@ class DBServerTestsuite(object):
                 getattr(dg, adder_func)(dbvalue)
                 self.conn.send(dg)
 
+                update = Datagram.create([DATABASE_PREFIX|doid], 110,
+                                         DBSERVER_OBJECT_SET_FIELD)
+                update.add_doid(doid)
+                update.add_uint16(field_id)
+                getattr(update, adder_func)(dbvalue)
+                self.expect(self.objects, update)
+
                 # Retrieve it back...
                 ctx += 1
                 dg = Datagram.create([75757], 110, DBSERVER_OBJECT_GET_FIELD)
@@ -1313,6 +1317,12 @@ class DBServerTestsuite(object):
         dg.add_uint16(db_complex)
         add_fields_to_complex(dg)
         self.conn.send(dg)
+
+        update = Datagram.create([DATABASE_PREFIX|doid], 110, DBSERVER_OBJECT_SET_FIELD)
+        update.add_doid(doid)
+        update.add_uint16(db_complex)
+        add_fields_to_complex(update)
+        self.expect(self.objects, update)
 
         # Retrieve it back...
         ctx += 1
