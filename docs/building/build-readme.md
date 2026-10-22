@@ -95,4 +95,15 @@ GitHub Actions builds and tests Linux with GCC and Clang, macOS, and Windows.
 Linux exercises YAML, MongoDB, and PostgreSQL; macOS and Windows exercise YAML
 and MongoDB. The Linux job also builds the MongoDB driver using the same Docker
 build stage used by the MongoDB image. CTest runs sequentially because the
-integration tests use fixed local ports.
+integration tests use fixed local ports. After each platform's tests pass, CI
+uploads a Windows ZIP, Linux x86_64 tarball, and macOS tarball with their
+non-system runtime libraries. The database server programs themselves remain
+separate services.
+
+Workflow artifacts use the repository's configured retention period. Successful
+builds of the default branch are also published as assets on the rolling
+`latest-main` prerelease, which does not expire with Actions artifacts. Successful
+`v*` tag builds publish the same packages on that version's GitHub Release.
+The publisher uses the workflow's built-in `GITHUB_TOKEN` with `contents: write`,
+so it needs no repository secrets. Repository rules must allow the workflow to
+move the `latest-main` tag and replace that prerelease's assets.

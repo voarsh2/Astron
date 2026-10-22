@@ -174,6 +174,10 @@ For a local container setup with the default YAML database, run
 `docker compose --profile postgresql up --build astron-postgresql postgres`.
 The image is built by the GitHub Actions pipeline and published to GitHub
 Container Registry for pushes to the default branch and version tags.
+Successful CI runs also provide Windows, Linux, and macOS binary packages. The
+latest successful default-branch packages are kept on the rolling
+`latest-main` prerelease on the repository's Releases page; version-tagged
+packages are attached to their GitHub Releases.
 
 
 
