@@ -56,7 +56,7 @@ class AstronClient : public Client, public NetworkHandler
 
     //Heartbeat
     long m_heartbeat_timeout;
-    Timeout* m_heartbeat_timer = nullptr;
+    std::shared_ptr<Timeout> m_heartbeat_timer;
 
   public:
     AstronClient(ConfigNode config, ClientAgent* client_agent, const std::shared_ptr<uvw::TcpHandle> &socket,
@@ -71,6 +71,18 @@ class AstronClient : public Client, public NetworkHandler
         pre_initialize();
 
         m_client->initialize(socket, remote, local, haproxy_mode);
+    }
+
+    ~AstronClient() override
+    {
+        // Timeout callbacks retain the lifetime gate, not this object. Mark
+        // the client gone before destroying any derived-class state.
+        std::lock_guard<std::recursive_mutex> lifetime_lock(m_lifetime->mutex);
+        m_lifetime->client = nullptr;
+        if(m_heartbeat_timer) {
+            m_heartbeat_timer->cancel();
+            m_heartbeat_timer.reset();
+        }
     }
 
     inline void pre_initialize()
@@ -93,8 +105,8 @@ class AstronClient : public Client, public NetworkHandler
     void heartbeat_timeout()
     {
         lock_guard<recursive_mutex> lock(m_client_lock);
-        // The heartbeat timer has already deleted itself at this point
-        // Holding on to it means receive_disconnect will try to invoke cancel() on it, and we can't have that.
+        // The timer callback already disabled itself. Drop our owner before
+        // disconnect cleanup tries to cancel it again.
         m_heartbeat_timer = nullptr;
         send_disconnect(CLIENT_DISCONNECT_NO_HEARTBEAT,
                         "Server timed out while waiting for heartbeat.");
@@ -104,9 +116,14 @@ class AstronClient : public Client, public NetworkHandler
     {
         //If heartbeat, start the heartbeat timer now.
         if(m_heartbeat_timeout != 0) {
-            m_heartbeat_timer = new Timeout(m_heartbeat_timeout,
-                                std::bind(&AstronClient::heartbeat_timeout,
-                                          this));
+            const auto lifetime = m_lifetime;
+            m_heartbeat_timer = std::make_shared<Timeout>(m_heartbeat_timeout,
+                [lifetime]() {
+                    std::lock_guard<std::recursive_mutex> lifetime_lock(lifetime->mutex);
+                    if(lifetime->client != nullptr) {
+                        static_cast<AstronClient*>(lifetime->client)->heartbeat_timeout();
+                    }
+                });
             m_heartbeat_timer->start();
         }
 
@@ -206,6 +223,7 @@ class AstronClient : public Client, public NetworkHandler
     //       responsible for terminating the connection.
     virtual void receive_disconnect(const uvw::ErrorEvent &evt)
     {
+        std::lock_guard<std::recursive_mutex> lifetime_lock(m_lifetime->mutex);
         lock_guard<recursive_mutex> lock(m_client_lock);
 
         if(!m_clean_disconnect && !m_client->is_local()) {
