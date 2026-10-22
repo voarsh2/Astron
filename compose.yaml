@@ -1,6 +1,6 @@
 services:
   astron:
-    image: ghcr.io/astron/astron:latest
+    image: ${ASTRON_IMAGE:-ghcr.io/voarsh2/astron:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -14,7 +14,7 @@ services:
 
   astron-postgresql:
     profiles: [postgresql]
-    image: ghcr.io/astron/astron:latest
+    image: ${ASTRON_IMAGE:-ghcr.io/voarsh2/astron:latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -45,7 +45,7 @@ services:
 
   astron-mongodb:
     profiles: [mongodb]
-    image: ghcr.io/astron/astron:mongodb-latest
+    image: ${ASTRON_MONGODB_IMAGE:-ghcr.io/voarsh2/astron:mongodb-latest}
     build:
       context: .
       dockerfile: Dockerfile

@@ -96,6 +96,8 @@ class SociSQLDatabase : public OldDatabaseBackend
             m_sql.commit(); // End transaction
         } catch(const soci_error &e) {
             m_sql.rollback(); // Revert transaction
+            m_log->error() << "Failed to create object of class '" << dcc->get_name()
+                           << "': " << e.what() << endl;
             return 0;
         }
 
@@ -189,6 +191,8 @@ class SociSQLDatabase : public OldDatabaseBackend
                 set_fields_in_table(do_id, dcc, fields);
                 m_sql.commit(); // End transaction
             } catch(const soci_error &e) {
+                m_log->error() << "Failed to set field '" << field->get_name()
+                               << "' for object " << do_id << ": " << e.what() << endl;
                 m_sql.rollback(); // Revert transaction
             }
         }
@@ -245,8 +249,7 @@ class SociSQLDatabase : public OldDatabaseBackend
         }
 
         val = format_value(field->get_type(), value);
-        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-              << "='" << val << "' WHERE object_id=" << do_id << ";";
+        update_field(do_id, dcc, field, val);
         return true;
     }
     virtual bool set_fields_if_empty(doid_t do_id, FieldValues &values)
@@ -288,8 +291,7 @@ class SociSQLDatabase : public OldDatabaseBackend
                     }
 
                     value = format_value(it->first->get_type(), it->second);
-                    m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-                          << "='" << value << "' WHERE object_id=" << do_id << ";";
+                    update_field(do_id, dcc, field, value);
                 }
             }
 
@@ -346,8 +348,7 @@ class SociSQLDatabase : public OldDatabaseBackend
         }
 
         val = format_value(field->get_type(), value);
-        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-              << "='" << val << "' WHERE object_id=" << do_id << ";";
+        update_field(do_id, dcc, field, val);
         return true;
     }
     virtual bool set_fields_if_equals(doid_t do_id, const FieldValues &equals,
@@ -383,8 +384,7 @@ class SociSQLDatabase : public OldDatabaseBackend
                     string equal = format_value(field->get_type(), it->second);
                     if(value == equal) {
                         string insert = format_value(field->get_type(), values[field]);
-                        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
-                              << "='" << insert << "' WHERE object_id=" << do_id << ";";
+                        update_field(do_id, dcc, field, insert);
                     } else {
                         failed = true;
                     }
@@ -462,6 +462,12 @@ class SociSQLDatabase : public OldDatabaseBackend
     }
 
   protected:
+    void update_field(doid_t id, const Class* dcc, const Field* field, const string &value)
+    {
+        m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << field->get_name()
+              << "=:value WHERE object_id=:id;", use(value), use(id);
+    }
+
     void connect()
     {
         // Prepare database, username, password, etc for connection
@@ -707,13 +713,11 @@ class SociSQLDatabase : public OldDatabaseBackend
     void set_fields_in_table(doid_t id, const Class* dcc,
                              const FieldValues &fields)
     {
-        string name, value;
+        string value;
         for(auto it = fields.begin(); it != fields.end(); ++it) {
             if(it->first->has_keyword("db")) {
-                name = it->first->get_name();
                 value = format_value(it->first->get_type(), it->second);
-                m_sql << "UPDATE fields_" << dcc->get_name() << " SET " << name << "='" << value
-                      << "' WHERE object_id=" << id << ";";
+                update_field(id, dcc, it->first, value);
             }
         }
     }

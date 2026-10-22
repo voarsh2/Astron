@@ -61,6 +61,14 @@ To build and start the MongoDB image and server:
 
     docker compose --profile mongodb up --build astron-mongodb mongodb
 
+To run an image published from a fork branch, set its SHA-tagged image first:
+
+    ASTRON_IMAGE=ghcr.io/owner/repo:sha docker compose up --pull always --no-build
+    ASTRON_IMAGE=ghcr.io/owner/repo:sha docker compose --profile postgresql up \
+        --pull always --no-build astron-postgresql postgres
+    ASTRON_MONGODB_IMAGE=ghcr.io/owner/repo:mongodb-sha docker compose --profile mongodb up \
+        --pull always --no-build astron-mongodb mongodb
+
 The YAML, PostgreSQL, and MongoDB Astron services share the same public ports;
 run one Astron service at a time. When selecting a profile, name the desired
 Astron and database services explicitly so Compose does not also start the

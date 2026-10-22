@@ -78,7 +78,10 @@ void MDNetworkParticipant::receive_datagram(DatagramHandle dg)
         }
     } catch(const DatagramIteratorEOF &) {
         logger().error() << "MDNetworkParticipant received a truncated datagram." << std::endl;
-        terminate();
+        // Close the socket first. NetworkClient notifies us of the disconnect
+        // after its current receive callback has returned, so the director can
+        // safely remove this participant without destroying it mid-callback.
+        m_client->disconnect();
         return;
     }
 

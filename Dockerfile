@@ -146,6 +146,7 @@ COPY --from=build-mongodb /tmp/astron-build/astrond /usr/local/bin/astrond
 COPY docker/astron-mongo.yml /etc/astron/astron-mongo.yml
 COPY docker/astron-yaml.yml /etc/astron/astron-yaml.yml
 USER astron
+CMD ["-l", "info", "/etc/astron/astron-mongo.yml"]
 
 FROM runtime-postgresql AS runtime
 CMD ["-l", "info", "/etc/astron/astron-yaml.yml"]

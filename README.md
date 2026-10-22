@@ -11,6 +11,25 @@ Group, and used in-house from 2001 until 2013.
 The suite consists of many components, which handle separate tasks in order to distribute
 the workload of managing a multi-sharded game/application environment with many objects and clients.
 
+----
+
+### This is a fork
+
+This is an **unofficial fork of [Astron](https://github.com/Astron/Astron)**, focused on modernising its build system, dependencies, testing, and deployment tooling while aiming to preserve compatibility with the original protocol.
+
+This is **not an official Astron release**, and no guarantees of production readiness, feature completeness, or ongoing support are implied.
+
+The [original upstream repository](https://github.com/Astron/Astron) remains available for historical issues, documentation, and reference, and hopefully a future revival!
+
+Other related projects include:
+
+- [Ardos](https://github.com/ksmit799/Ardos) — an Astron-derived server with additional architectural features, including meshed Message Directors and legacy Disney client compatibility.
+- [OtpGo](https://github.com/LittleToonCat/OtpGo) — a Go implementation of Disney's OTP server architecture, focused on compatibility with original Disney MMO clients and supporting Lua-based game-specific server roles.
+
+These projects have different designs, priorities, and compatibility goals. If this fork benefits you, contributions and pull requests are welcome. **Sharing is caring.** :D
+
+----
+
 ## Overview ##
 
 ### Objects ###

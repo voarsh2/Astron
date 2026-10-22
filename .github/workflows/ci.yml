@@ -128,6 +128,11 @@ jobs:
         image: mongo:8.0
         ports:
           - 57024:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -174,6 +179,7 @@ jobs:
 
   build:
     runs-on: ubuntu-24.04
+    needs: [windows-build, macos-tests, linux-tests]
     permissions:
       contents: read
       packages: write

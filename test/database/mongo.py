@@ -23,7 +23,10 @@ def _wait_for_mongo(mongod):
         except OSError:
             time.sleep(0.25)
 
-    raise RuntimeError('mongod did not start listening within 60 seconds')
+    raise RuntimeError(
+        'MongoDB at %s:%d did not start listening within %d seconds' %
+        (MONGO_HOST, MONGO_PORT, MONGO_STARTUP_TIMEOUT)
+    )
 
 
 def setup_mongo(unittest):

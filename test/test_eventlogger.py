@@ -17,8 +17,8 @@ roles:
       output: %s
 """
 
-STANDARD_EVENT = '\x82\xa3bar\xa3baz\xa4type\xa3foo' # MessagePack formatted event
-NONSTANDARD_MSGPACK = '{'
+STANDARD_EVENT = b'\x82\xa3bar\xa3baz\xa4type\xa3foo' # MessagePack formatted event
+NONSTANDARD_MSGPACK = b'{'
 
 class TestEventLogger(unittest.TestCase):
     @classmethod
@@ -67,7 +67,7 @@ class TestEventLogger(unittest.TestCase):
     def test_ignoresNonMsgpack(self):
         numLines1 = self.numLinesLog()
 
-        self.socket.sendto("123", NETWORK_ADDR)
+        self.socket.sendto(b"123", NETWORK_ADDR)
         time.sleep(NETWORK_WAIT) # allow network time
 
         self.assertEqual(self.numLinesLog(), numLines1) # log is unchanged

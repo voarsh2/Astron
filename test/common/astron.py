@@ -506,6 +506,7 @@ class MDConnection(object):
     def __init__(self, sock):
         self.s = sock
         self.s.settimeout(0.1)
+        self._recv_buffer = bytearray()
 
     def send(self, datagram):
         data = datagram.get_data()
@@ -538,25 +539,27 @@ class MDConnection(object):
 
     def _read(self):
         try:
-            length = DGSIZE_SIZE_BYTES
-            result = b''
-            while len(result) < length:
-                data = self._recv(length - len(result))
+            header_size = DGSIZE_SIZE_BYTES
+            while len(self._recv_buffer) < header_size:
+                data = self._recv(header_size - len(self._recv_buffer))
                 if not data:
                     raise EOFError('Remote socket closed connection')
-                result += data
-            length, = struct.unpack(DATATYPES['size'], result)
+                self._recv_buffer.extend(data)
+
+            length, = struct.unpack(DATATYPES['size'], self._recv_buffer[:header_size])
+
+            frame_size = header_size + length
+            while len(self._recv_buffer) < frame_size:
+                data = self._recv(frame_size - len(self._recv_buffer))
+                if not data:
+                    raise EOFError('Remote socket closed connection')
+                self._recv_buffer.extend(data)
         except socket.error:
             return None
 
-        result = b''
-        while len(result) < length:
-            data = self._recv(length - len(result))
-            if not data:
-                raise EOFError('Remote socket closed connection')
-            result += data
-
-        return result
+        datagram = bytes(self._recv_buffer[header_size:frame_size])
+        del self._recv_buffer[:frame_size]
+        return datagram
 
 class ChannelConnection(MDConnection):
     def __init__(self, connAddr, connPort, MDChannel=None):

@@ -12,7 +12,7 @@ class DBServerTestsuite(object):
         dg.add_uint16(0) # Field count
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -49,7 +49,7 @@ class DBServerTestsuite(object):
         self.conn.send(dg)
 
         # The Database should return the context and do_id...
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
@@ -85,7 +85,7 @@ class DBServerTestsuite(object):
         self.conn.send(dg)
 
         # The Database should return a new do_id...
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
@@ -135,7 +135,7 @@ class DBServerTestsuite(object):
         self.conn.send(dg)
 
         # The Database should return the context and do_id...
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([20], 75757, DBSERVER_CREATE_OBJECT_RESP,
@@ -280,7 +280,7 @@ class DBServerTestsuite(object):
         self.conn.send(dg)
 
         # The Database should return a new do_id...
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([50], 75757, DBSERVER_CREATE_OBJECT_RESP))
@@ -400,7 +400,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(54231)
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -518,7 +518,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(55)
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -611,7 +611,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(767676)
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -814,7 +814,7 @@ class DBServerTestsuite(object):
         dg.add_string("Uppercut! Downercut! Fireball! Bowl of Punch!")
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -959,7 +959,7 @@ class DBServerTestsuite(object):
             dg.add_uint16(123)
             self.conn.send(dg)
 
-            dg = self.conn.recv_maybe()
+            dg = self.recv_expected(self.conn)
             self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
             dgi = DatagramIterator(dg)
             dgi.seek(CREATE_DOID_OFFSET)
@@ -1139,7 +1139,7 @@ class DBServerTestsuite(object):
         dg.add_uint32(1337)
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -1242,7 +1242,7 @@ class DBServerTestsuite(object):
         dg.add_uint16(0) # Field count
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
@@ -1260,7 +1260,7 @@ class DBServerTestsuite(object):
             ('int32', [88, 0, (1<<31)-1, -1<<31]),
             ('uint64', [88, 0, (1<<64)-1]),
             ('int64', [88, 0, (1<<63)-1, -1<<63]),
-            ('char',  ['H', 'i', '\x00', '\x7f']),
+            ('char',  [b'H', b'i', b'\x00', b'\x7f']),
             ('float64', [2.0, 8.7, -32.114]),
             ('string', ['Hey', 'there', '', 'Astron', 'world']),
             ('blob', ['\x00', '\xffabcdefgh', '', '\x00\x00\x00\x00\x01\x00\x00\x02']),
@@ -1339,7 +1339,7 @@ class DBServerTestsuite(object):
         self.conn.send(dg)
 
         # Get reply with all fields
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive GetAllResp.")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint8(), 1) # Number of recipients
@@ -1362,7 +1362,7 @@ class DBServerTestsuite(object):
         dg.add_raw(fielddata)
         self.conn.send(dg)
 
-        dg = self.conn.recv_maybe()
+        dg = self.recv_expected(self.conn)
         self.assertTrue(dg is not None, "Did not receive CreateObjectResp.")
         dgi = DatagramIterator(dg)
         dgi.seek(CREATE_DOID_OFFSET)
