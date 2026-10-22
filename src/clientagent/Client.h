@@ -5,7 +5,6 @@
 #include "util/Timeout.h"
 
 #include <vector>
-#include <queue>
 #include <memory>
 #include <unordered_set>
 #include <unordered_map>
@@ -54,13 +53,22 @@ struct Interest {
 
 
 class Client; // forward declaration
+struct ClientLifetime
+{
+    explicit ClientLifetime(Client* client) : client(client) {}
+
+    std::recursive_mutex mutex;
+    Client* client;
+};
+
 // An InterestOperation represents the process of receiving the entirety of the interest
 // within a client.  The InterestOperation stays around until all new visible objects from a
 // newly created or updated interest have been received and forwarded to the Client.
-class InterestOperation
+class InterestOperation : public std::enable_shared_from_this<InterestOperation>
 {
   public:
     Client *m_client;
+    std::shared_ptr<ClientLifetime> m_client_lifetime;
 
     uint16_t m_interest_id;
     uint32_t m_client_context;
@@ -70,7 +78,7 @@ class InterestOperation
     std::unordered_set<channel_t> m_callers;
 
     unsigned long m_timeout_interval;
-    Timeout* m_timeout = nullptr;
+    std::shared_ptr<Timeout> m_timeout;
 
     bool m_has_total = false;
     doid_t m_total = 0; // as doid_t because <max_objs_in_zones> == <max_total_objs>
@@ -83,15 +91,17 @@ class InterestOperation
                       doid_t parent, std::unordered_set<zone_t> zones, channel_t caller);
     ~InterestOperation();
 
+    void start_timeout();
     bool is_ready();
     void set_expected(doid_t total);
     void queue_expected(DatagramHandle dg);
     void queue_datagram(DatagramHandle dg);
     void finish(bool is_timeout = false);
-    void on_timeout_generate(Timeout* timeout);
+    void on_timeout_generate(std::shared_ptr<Timeout> timeout);
     void timeout();
 
   private:
+    std::mutex m_timeout_mutex;
     bool m_finished = false;
 };
 
@@ -106,6 +116,7 @@ class Client : public MDParticipantInterface
 
   protected:
     std::recursive_mutex m_client_lock;     // The lock guarding the client.
+    std::shared_ptr<ClientLifetime> m_lifetime;
     ClientAgent* m_client_agent;            // The ClientAgent handling this client
     ClientState m_state = CLIENT_STATE_NEW; // Current state of the Client state machine
     channel_t m_channel = 0;                // Current channel client is listening on
@@ -133,7 +144,7 @@ class Client : public MDParticipantInterface
     // m_interests is a map of interest ids to interests.
     std::unordered_map<uint16_t, Interest> m_interests;
     // m_pending_interests is a map of contexts to in-progress interests.
-    std::unordered_map<uint32_t, InterestOperation*> m_pending_interests;
+    std::unordered_map<uint32_t, std::shared_ptr<InterestOperation>> m_pending_interests;
     // m_fields_sendable is a map of DoIds to sendable field sets.
     std::unordered_map<uint16_t, std::unordered_set<uint16_t> > m_fields_sendable;
     // If we did not receive a pointer from the Client Agent, we create one ourselves
@@ -143,9 +154,6 @@ class Client : public MDParticipantInterface
     LogCategory *m_log;
     // new LogCategory, incase we did not receive one from the Client Agent
     std::unique_ptr<LogCategory> m_log_owner;
-
-    std::mutex m_timeout_mutex;
-    std::queue<TimeoutSetCallback> m_pending_timeouts;
 
     Client(ConfigNode config, ClientAgent* client_agent);
 
@@ -261,10 +269,8 @@ class Client : public MDParticipantInterface
 
   private:
     void generate_timeout(TimeoutSetCallback timeout_set_callback);
-    void generate_timeouts();
     // notify_interest_done send a CLIENTAGENT_DONE_INTEREST_RESP to the
     // interest operation's caller, if one has been set.
     void notify_interest_done(uint16_t interest_id, channel_t caller);
     void notify_interest_done(const InterestOperation* iop);
-    bool m_is_generating_timeouts = false;
 };

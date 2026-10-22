@@ -14,14 +14,12 @@
 //
 // NOTE: The thread that calls the function is the main thread.
 // Make sure that your callback doesn't have unintended consequences on performance.
-// NOTE 2: The Timeout deletes itself under 2 different conditions:
-// a) The timeout has been reached
-// b) cancel() has been invoked on the Timeout object.
-// In both cases, make SURE that your reference to the Timeout object is set to nullptr and that no further invocations occur.
+// Timeout objects are shared-owned. The timer callback holds only a weak reference,
+// while off-thread cancellation keeps the object alive until the main-loop task runs.
 
 typedef std::function<void()> TimeoutCallback;
 
-class Timeout
+class Timeout : public std::enable_shared_from_this<Timeout>
 {
   public:
     Timeout(unsigned long ms, std::function<void()> f);
@@ -56,5 +54,5 @@ class Timeout
     void timer_callback();
 };
 
-typedef std::function<void(Timeout*)> TimeoutSetCallback;
+typedef std::function<void(std::shared_ptr<Timeout>)> TimeoutSetCallback;
 

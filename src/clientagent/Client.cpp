@@ -3,10 +3,12 @@
 #include "core/msgtypes.h"
 #include "clientagent/ClientMessages.h"
 #include "clientagent/ClientAgent.h"
+#include "util/IntegrationTestHooks.h"
 using namespace std;
 using dclass::Class;
 
 Client::Client(ConfigNode, ClientAgent* client_agent) :
+    m_lifetime(std::make_shared<ClientLifetime>(this)),
     m_client_agent(client_agent)
 {
     assert(std::this_thread::get_id() == g_main_thread_id);
@@ -35,6 +37,12 @@ Client::Client(ConfigNode, ClientAgent* client_agent) :
 
 Client::~Client()
 {
+    // In-flight timeout callbacks hold this gate while accessing the Client.
+    // Clear the pointer before the object is destroyed so a late callback can
+    // observe that its Client has gone away without touching the raw pointer.
+    std::lock_guard<std::recursive_mutex> lifetime_lock(m_lifetime->mutex);
+    m_lifetime->client = nullptr;
+
     // We need to be holding our own lock, just in case another thread is busy
     // doing some last-microsecond cleanup.
     lock_guard<recursive_mutex> lock(m_client_lock);
@@ -44,6 +52,10 @@ Client::~Client()
 
 void Client::annihilate()
 {
+    // Match the timeout callback's lifetime -> client lock order. Once the
+    // pending interests are finished, no timeout callback may access this
+    // Client again, even while MessageDirector is arranging its deletion.
+    std::lock_guard<std::recursive_mutex> lifetime_lock(m_lifetime->mutex);
     lock_guard<recursive_mutex> lock(m_client_lock);
     if(is_terminated()) {
         return;
@@ -63,13 +75,13 @@ void Client::annihilate()
         route_datagram(dg);
     }
 
-    // Note that finish() normally results in the InterestOperation deleting
-    // itself from m_pending_interests, so we have to be VERY careful with this
-    // for loop. Using (it++) ensures that 'it' is advanced BEFORE finish() is
-    // called; doing so after means the iterator is invalid!
+    // finish() erases the operation from m_pending_interests. Advance first so
+    // the iterator remains valid while the shared operation is completed.
     for(auto it = m_pending_interests.begin(); it != m_pending_interests.end();) {
         (it++)->second->finish();
     }
+
+    m_lifetime->client = nullptr;
 
     // Tell the MD this client is gone
     terminate();
@@ -87,43 +99,17 @@ void Client::log_event(LoggedEvent &event)
 
 void Client::generate_timeout(TimeoutSetCallback timeout_set_callback)
 {
-    {
-        std::lock_guard<std::mutex> lock(m_timeout_mutex);
-        m_pending_timeouts.push(timeout_set_callback);
-    }
+    auto setup_timeout = [callback = std::move(timeout_set_callback)]() mutable {
+        callback(std::make_shared<Timeout>());
+    };
 
     if(std::this_thread::get_id() != g_main_thread_id) {
-        TaskQueue::singleton.enqueue_task([self = this]() {
-            self->generate_timeouts();
+        TaskQueue::singleton.enqueue_task([setup = std::move(setup_timeout)]() mutable {
+            IntegrationTestHooks::run_after_interest_timeout_setup_delay(std::move(setup));
         });
     } else {
-        generate_timeouts();
+        IntegrationTestHooks::run_after_interest_timeout_setup_delay(std::move(setup_timeout));
     }
-}
-
-void Client::generate_timeouts()
-{
-    assert(std::this_thread::get_id() == g_main_thread_id);
-
-    if(m_is_generating_timeouts) {
-        // Already in the middle of another generate_timeouts invocation.
-        return;
-    }
-
-    m_is_generating_timeouts = true;
-
-    {
-        std::lock_guard<std::mutex> lock(m_timeout_mutex);
-
-        while(!m_pending_timeouts.empty()) {
-            TimeoutSetCallback timeout_set_callback = m_pending_timeouts.front();
-            m_pending_timeouts.pop();
-            Timeout* timeout = new Timeout();
-            timeout_set_callback(timeout);
-        }
-    }
-
-    m_is_generating_timeouts = false;
 }
 
 // lookup_object returns the class of the object with a do_id.
@@ -246,9 +232,10 @@ void Client::add_interest(Interest &i, uint32_t context, channel_t caller)
 
     uint32_t request_context = m_next_context++;
 
-    InterestOperation *iop = new InterestOperation(this, m_client_agent->m_interest_timeout,
+    auto iop = std::make_shared<InterestOperation>(this, m_client_agent->m_interest_timeout,
             i.id, context, request_context, i.parent, new_zones, caller);
     m_pending_interests.emplace(request_context, iop);
+    iop->start_timeout();
 
     DatagramPtr resp = Datagram::create();
     resp->add_server_header(i.parent, m_channel, STATESERVER_OBJECT_GET_ZONES_OBJECTS);
@@ -617,7 +604,7 @@ void Client::handle_datagram(DatagramHandle in_dg, DatagramIterator &dgi)
         doid_t parent = dgi.read_doid();
         zone_t zone = dgi.read_zone();
         for(auto& it : m_pending_interests) {
-            InterestOperation *interest_operation = it.second;
+            const auto& interest_operation = it.second;
             if(interest_operation->m_parent == parent &&
                interest_operation->m_zones.find(zone) != interest_operation->m_zones.end()) {
 
@@ -870,6 +857,7 @@ InterestOperation::InterestOperation(
     uint16_t interest_id, uint32_t client_context, uint32_t request_context,
     doid_t parent, unordered_set<zone_t> zones, channel_t caller) :
     m_client(client),
+    m_client_lifetime(client->m_lifetime),
     m_interest_id(interest_id),
     m_client_context(client_context),
     m_request_context(request_context),
@@ -877,8 +865,6 @@ InterestOperation::InterestOperation(
     m_timeout_interval(timeout)
 {
     m_callers.insert(m_callers.end(), caller);
-    m_client->generate_timeout(bind(&InterestOperation::on_timeout_generate, this, 
-                               std::placeholders::_1));
 }
 
 InterestOperation::~InterestOperation()
@@ -886,33 +872,83 @@ InterestOperation::~InterestOperation()
     assert(m_finished);
 }
 
-void InterestOperation::on_timeout_generate(Timeout* timeout)
+void InterestOperation::start_timeout()
+{
+    std::weak_ptr<InterestOperation> weak_self = shared_from_this();
+    // Issue #427: the State Server can answer on the routing thread before this
+    // main-loop task runs. The operation may already be finished then, so the
+    // deferred callback must never retain or dereference a raw `this` pointer.
+    m_client->generate_timeout([weak_self](std::shared_ptr<Timeout> timeout) {
+        if(auto self = weak_self.lock()) {
+            self->on_timeout_generate(std::move(timeout));
+        } else {
+            timeout->cancel();
+        }
+    });
+}
+
+void InterestOperation::on_timeout_generate(std::shared_ptr<Timeout> timeout)
 {
     assert(std::this_thread::get_id() == g_main_thread_id);
 
+    std::lock_guard<std::mutex> lock(m_timeout_mutex);
+    if(m_finished) {
+        timeout->cancel();
+        return;
+    }
+
     m_timeout = timeout;
-    m_timeout->initialize(m_timeout_interval, bind(&InterestOperation::timeout, this));
+    std::weak_ptr<InterestOperation> weak_self = shared_from_this();
+    m_timeout->initialize(m_timeout_interval, [weak_self]() {
+        if(auto self = weak_self.lock()) {
+            self->timeout();
+        }
+    });
     m_timeout->start();
 }
 
 void InterestOperation::timeout()
 {
-    lock_guard<recursive_mutex> lock(m_client->m_client_lock);
-    m_client->m_log->warning() << "Interest operation timed out; forcing.\n";
+    // A timer callback may already hold this operation after Client::annihilate
+    // removes it from the pending-interest map. Keep the lifetime gate while
+    // accessing the Client so its destructor cannot race this timeout path.
+    std::lock_guard<std::recursive_mutex> lifetime_lock(m_client_lifetime->mutex);
+    Client* client = m_client_lifetime->client;
+    if(client == nullptr) {
+        return;
+    }
+
+    lock_guard<recursive_mutex> lock(client->m_client_lock);
+    {
+        std::lock_guard<std::mutex> operation_lock(m_timeout_mutex);
+        if(m_finished) {
+            return;
+        }
+    }
+    client->m_log->warning() << "Interest operation timed out; forcing.\n";
     finish(true);
 }
 
 void InterestOperation::finish(bool is_timeout)
 {
-    if(!is_timeout && m_timeout != nullptr) {
-        if(!m_timeout->cancel()) {
-            // The timeout is already running; let it clean up instead.
+    std::shared_ptr<InterestOperation> self = shared_from_this();
+    {
+        std::lock_guard<std::mutex> lock(m_timeout_mutex);
+        if(m_finished) {
             return;
         }
 
-        // We've already invoked cancel on the m_timeout object:
-        // It's gonna get around to deleting itself as soon as the async operation runs, so it's not safe to hold onto its pointer.
-        m_timeout = nullptr;
+        if(!is_timeout && m_timeout) {
+            // The callback may already have started, in which case cancel()
+            // returns false. Complete now anyway; its weak operation reference
+            // and finish()'s idempotence make the eventual callback harmless.
+            m_timeout->cancel();
+        }
+
+        // Timeout owns its async lifetime. Clearing our reference is safe even
+        // when cancel() has queued work on the main loop.
+        m_timeout.reset();
+        m_finished = true;
     }
 
     // Send objects in the initial snapshot
@@ -947,9 +983,6 @@ void InterestOperation::finish(bool is_timeout)
         m_client->handle_datagram(it, dgi);
     }
 
-    m_finished = true;
-
-    delete this;
 }
 
 bool InterestOperation::is_ready()

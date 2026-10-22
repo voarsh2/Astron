@@ -30,8 +30,11 @@ void Timeout::setup()
 
     m_timer = m_loop->resource<uvw::TimerHandle>();
 
-    m_timer->on<uvw::TimerEvent>([self = this](const uvw::TimerEvent&, uvw::TimerHandle&) {
-        self->timer_callback();
+    std::weak_ptr<Timeout> weak_self = shared_from_this();
+    m_timer->on<uvw::TimerEvent>([weak_self](const uvw::TimerEvent&, uvw::TimerHandle&) {
+        if(auto self = weak_self.lock()) {
+            self->timer_callback();
+        }
     });
 }
 
@@ -45,7 +48,6 @@ void Timeout::destroy_timer()
         m_timer = nullptr;
     }
 
-    delete this;
 }
 
 void Timeout::timer_callback()
@@ -73,21 +75,20 @@ void Timeout::reset()
 
 bool Timeout::cancel()
 {
-    const bool already_cancelled = !m_callback_disabled.exchange(true);
+    const bool cancellation_succeeded = !m_callback_disabled.exchange(true);
 
     if(std::this_thread::get_id() != g_main_thread_id) {
-        TaskQueue::singleton.enqueue_task([self = this]() {
-            self->cancel();
+        std::shared_ptr<Timeout> self = shared_from_this();
+        TaskQueue::singleton.enqueue_task([self = std::move(self)]() {
+            self->destroy_timer();
         });
 
-        return already_cancelled;
+        return cancellation_succeeded;
     }
 
-    if(m_timer != nullptr) {
-        destroy_timer();
-    }
+    destroy_timer();
 
-    return already_cancelled;
+    return cancellation_succeeded;
 }
 
 Timeout::~Timeout()

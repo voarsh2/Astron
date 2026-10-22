@@ -114,6 +114,8 @@ set(UTIL_FILES
     src/util/DatagramIterator.h
     src/util/EventSender.cpp
     src/util/EventSender.h
+    src/util/IntegrationTestHooks.cpp
+    src/util/IntegrationTestHooks.h
     src/util/Timeout.cpp
     src/util/Timeout.h
     src/util/TaskQueue.cpp
@@ -264,6 +266,9 @@ target_link_libraries(astrond PRIVATE
 )
 
 target_compile_definitions(astrond PRIVATE ASTRON_WITH_YAML)
+if(ASTRON_ENABLE_INTEGRATION_TESTS)
+    target_compile_definitions(astrond PRIVATE ASTRON_ENABLE_INTEGRATION_TEST_HOOKS)
+endif()
 if(BUILD_DBSERVER)
     target_compile_definitions(astrond PRIVATE BUILD_DBSERVER)
 endif()
@@ -374,6 +379,7 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     if(BUILD_CLIENTAGENT)
         astron_add_python_test(clientagent test_clientagent.py)
+        astron_add_python_test(issue_427 test_issue_427.py)
         astron_add_python_test(validate_config_clientagent test_config_clientagent.py)
     endif()
     astron_add_python_test(validate_config_core test_config.py)
