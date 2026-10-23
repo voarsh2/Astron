@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import unittest, time, ssl, struct
+import unittest, time, ssl, struct, os
 from socket import socket, AF_INET, SOCK_STREAM, error as socket_error
 from common.unittests import ProtocolTest
 from common.astron import *
@@ -100,6 +100,7 @@ class TestClientAgent(ProtocolTest):
     def assertDisconnect(self, s, reason_code):
         deadline = time.monotonic() + self.RESPONSE_TIMEOUT
         timeout = s.s.gettimeout()
+        message = None
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -112,11 +113,13 @@ class TestClientAgent(ProtocolTest):
                     self.assertEqual(dgi.read_uint16(), reason_code)
                     # According to client_protocol.md, the string must provide some explanation, so
                     # ensure that it is there.
-                    self.assertNotEqual(dgi.read_string(), '')
+                    message = dgi.read_string()
+                    self.assertNotEqual(message, '')
                     break
         finally:
             s.s.settimeout(timeout)
         s.close()
+        return message
 
     def connect(self, do_hello=True, port=57128, tls_opts=None, proxy_header=None):
         s = socket(AF_INET, SOCK_STREAM)
@@ -211,7 +214,11 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint32(DC_HASH)
         dg.add_string('Equestria Online v5.7')
         client.send(dg)
-        self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION)
+        self.assertEqual(
+            self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION),
+            'Client version mismatch: client=Equestria Online v5.7, '
+            'server=Sword Art Online v5.1',
+        )
 
         # Now dchash validation:
         client = self.connect(False)
@@ -234,6 +241,32 @@ class TestClientAgent(ProtocolTest):
         self.expect(client, dg, isClient = True)
 
         client.close()
+
+    def test_oversized_client_version_mismatch(self):
+        if 'USE_32BIT_DATAGRAMS' in os.environ:
+            self.skipTest('The 32-bit datagram maximum is too large for this regression input')
+
+        # The incoming hello fits exactly in one datagram. The version is
+        # client-controlled, so the mismatch response must not echo it into an
+        # eject or event-log datagram.
+        client = self.connect(False)
+        dg = Datagram()
+        dg.add_uint16(CLIENT_HELLO)
+        dg.add_uint32(DC_HASH)
+        dg.add_string('v' * (DGSIZE_MAX - 8))
+        self.assertEqual(len(dg.get_data()), DGSIZE_MAX)
+        client.send(dg)
+        message = self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION)
+        self.assertEqual(
+            message,
+            'Client version mismatch: client=' + ('v' * 128) +
+            '..., server=Sword Art Online v5.1',
+        )
+
+        # A subsequent normal handshake verifies the ClientAgent stayed
+        # healthy after rejecting the maximum-sized version field.
+        healthy_client = self.connect()
+        healthy_client.close()
 
     def test_anonymous(self):
         self.server.flush()
