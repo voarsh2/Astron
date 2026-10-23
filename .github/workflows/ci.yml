@@ -334,9 +334,11 @@ jobs:
 
           # Keep this rolling prerelease mutable so the latest main packages
           # remain downloadable after Actions artifact retention expires.
-          tag_ref="repos/${GITHUB_REPOSITORY}/git/ref/tags/latest-main"
-          if gh api "$tag_ref" >/dev/null 2>&1; then
-            gh api --method PATCH "$tag_ref" -f "sha=$GITHUB_SHA" -F force=true >/dev/null
+          # GitHub uses /git/ref/{ref} to look up a ref, but /git/refs/{ref} to update it.
+          tag_lookup_ref="repos/${GITHUB_REPOSITORY}/git/ref/tags/latest-main"
+          tag_update_ref="repos/${GITHUB_REPOSITORY}/git/refs/tags/latest-main"
+          if gh api "$tag_lookup_ref" >/dev/null 2>&1; then
+            gh api --method PATCH "$tag_update_ref" -f "sha=$GITHUB_SHA" -F force=true >/dev/null
           else
             gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
               -f ref=refs/tags/latest-main \
