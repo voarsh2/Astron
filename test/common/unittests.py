@@ -1,7 +1,8 @@
-import unittest, subprocess, tempfile, os, threading
+import unittest, subprocess, tempfile, os
 import time
 from socket import socket, AF_INET, SOCK_STREAM, SOL_TCP, TCP_NODELAY
 from common.astron import *
+from common.process_output import ProcessOutput
 
 class ConfigTest(unittest.TestCase):
     class ConfigRunner(object):
@@ -12,19 +13,33 @@ class ConfigTest(unittest.TestCase):
             self.process = None
 
         def run(self, timeout):
-            def target():
-                self.process = subprocess.Popen([self.DAEMON_PATH, self.config])
-                self.process.communicate()
-
-            thread = threading.Thread(target=target)
-            thread.start()
-
-            thread.join(timeout)
-            if thread.is_alive():
-                self.process.terminate()
-                thread.join()
+            self.process = subprocess.Popen(
+                [self.DAEMON_PATH, self.config],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+            )
+            output = ProcessOutput(self.process)
+            try:
+                try:
+                    output.wait_for(
+                        'ASTRON_TEST_CONFIGURATION_READY', timeout, 'Astron config'
+                    )
+                except RuntimeError:
+                    if output.has_finished():
+                        self.process.wait()
+                        return 'Invalid'
+                    raise
                 return 'Valid'
-            return 'Invalid'
+            finally:
+                if self.process.poll() is None:
+                    self.process.terminate()
+                self.process.wait()
+                output.join()
+                self.process.stdout.close()
 
     @classmethod
     def writeConfig(cls, config):
@@ -33,7 +48,7 @@ class ConfigTest(unittest.TestCase):
         f.close()
 
     @classmethod
-    def checkConfig(cls, config, timeout = 2):
+    def checkConfig(cls, config, timeout = 30):
         cls.writeConfig(config)
         return cls.test_runner.run(timeout)
 

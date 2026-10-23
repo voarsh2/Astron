@@ -2,7 +2,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
+
+from common.process_output import ProcessOutput
 
 
 POSTGRES_HOST = '127.0.0.1'
@@ -15,22 +16,12 @@ Install the PostgreSQL server package and add its bin directory to PATH.
 """
 
 
-def _wait_for_postgres(postgresd, pg_isready):
-    deadline = time.monotonic() + POSTGRES_STARTUP_TIMEOUT
-    while time.monotonic() < deadline:
-        if postgresd.poll() is not None:
-            raise RuntimeError('PostgreSQL exited during startup')
-
-        result = subprocess.run(
-            [pg_isready, '-h', POSTGRES_HOST, '-p', POSTGRES_PORT],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(0.25)
-
-    raise RuntimeError('PostgreSQL did not become ready within 30 seconds')
+def _wait_for_postgres(output):
+    output.wait_for_any(
+        ('database system is ready to accept connections',),
+        POSTGRES_STARTUP_TIMEOUT,
+        'PostgreSQL',
+    )
 
 
 def setup_postgres(unittest):
@@ -38,12 +29,12 @@ def setup_postgres(unittest):
     initdb = shutil.which('initdb')
     createuser = shutil.which('createuser')
     createdb = shutil.which('createdb')
-    pg_isready = shutil.which('pg_isready')
-    if not all((postgres, initdb, createuser, createdb, pg_isready)):
+    if not all((postgres, initdb, createuser, createdb)):
         raise RuntimeError(POSTGRESQL_SETUP_ERROR)
 
     postgres_path = tempfile.mkdtemp(prefix='astron-', suffix='.postgresql')
     postgresd = None
+    output = None
     try:
         subprocess.run(
             [initdb, '-D', postgres_path, '--auth-local=trust', '--auth-host=trust'],
@@ -51,17 +42,21 @@ def setup_postgres(unittest):
             stdout=subprocess.DEVNULL,
         )
         with open(os.path.join(postgres_path, 'postgresql.conf'), 'a') as config:
-            config.write("\nunix_socket_directories = '/tmp'\n")
+            # Keep the readiness message stable regardless of the runner locale.
+            config.write("\nunix_socket_directories = '/tmp'\nlc_messages = 'C'\n")
 
-        log_path = os.path.join(postgres_path, 'postgres.log')
-        with open(log_path, 'w') as log_file:
-            postgresd = subprocess.Popen(
-                [postgres, '-D', postgres_path, '-h', POSTGRES_HOST, '-p', POSTGRES_PORT],
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
+        postgresd = subprocess.Popen(
+            [postgres, '-D', postgres_path, '-h', POSTGRES_HOST, '-p', POSTGRES_PORT],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            encoding='utf-8',
+            errors='replace',
+            bufsize=1,
+        )
+        output = ProcessOutput(postgresd)
 
-        _wait_for_postgres(postgresd, pg_isready)
+        _wait_for_postgres(output)
         subprocess.run(
             [createuser, '-p', POSTGRES_PORT, '-h', POSTGRES_HOST, '--superuser', '--createdb', 'astron'],
             check=True,
@@ -74,18 +69,17 @@ def setup_postgres(unittest):
         if postgresd is not None and postgresd.poll() is None:
             postgresd.terminate()
             postgresd.wait()
-        try:
-            with open(os.path.join(postgres_path, 'postgres.log'), 'r') as log_file:
-                details = log_file.read().strip()
-            if details:
-                error.args = ('%s\n%s' % (error, details),)
-        except OSError:
-            pass
+        if output is not None:
+            output.join()
+        details = output.tail() if output is not None else ''
+        if details:
+            error.args = ('%s\n%s' % (error, details),)
         shutil.rmtree(postgres_path, ignore_errors=True)
         raise
 
     unittest.postgres_path = postgres_path
     unittest.postgresd = postgresd
+    unittest.postgres_output = output
 
 
 def teardown_postgres(unittest):
@@ -97,6 +91,12 @@ def teardown_postgres(unittest):
         except subprocess.TimeoutExpired:
             postgresd.kill()
             postgresd.wait()
+
+    output = getattr(unittest, 'postgres_output', None)
+    if output is not None:
+        output.join()
+        if postgresd.stdout is not None:
+            postgresd.stdout.close()
 
     postgres_path = getattr(unittest, 'postgres_path', None)
     if postgres_path is not None:
