@@ -8,7 +8,9 @@ from common.process_output import ProcessOutput
 
 
 MONGO_HOST = '127.0.0.1'
-MONGO_PORT = 57024
+MONGO_PORT = int(os.environ.get('ASTRON_MONGO_TEST_PORT', '57024'))
+MONGO_URI = 'mongodb://%s:%d/test' % (MONGO_HOST, MONGO_PORT)
+MONGO_INVALID_URI = 'baddb://%s:%d/test' % (MONGO_HOST, MONGO_PORT)
 MONGO_STARTUP_TIMEOUT = 60
 
 

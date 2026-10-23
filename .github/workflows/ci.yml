@@ -153,7 +153,8 @@ jobs:
         # SERVER-136848).
         image: mongo:7.0
         ports:
-          - 57024:27017
+          # Let Actions choose a free host port instead of binding a fixed one.
+          - 27017/tcp
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
           --health-interval 5s
@@ -201,6 +202,8 @@ jobs:
         run: cmake --build "$RUNNER_TEMP/astron-build" --parallel 3
 
       - name: Test
+        env:
+          ASTRON_MONGO_TEST_PORT: ${{ job.services.mongodb.ports[27017] }}
         run: ctest --test-dir "$RUNNER_TEMP/astron-build" --output-on-failure
 
       - name: Package Linux build

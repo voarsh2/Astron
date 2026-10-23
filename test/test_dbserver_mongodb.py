@@ -4,7 +4,7 @@ from common.unittests import ProtocolTest
 from common.dbserver import DBServerTestsuite
 from common.astron import *
 from common.dcfile import *
-from database.mongo import setup_mongo, teardown_mongo
+from database.mongo import MONGO_URI, setup_mongo, teardown_mongo
 
 CONFIG = """\
 messagedirector:
@@ -23,8 +23,8 @@ roles:
         max: 1000010
       backend:
         type: mongodb
-        server: mongodb://127.0.0.1:57024/test
-""" % test_dc
+        server: %s
+""" % (test_dc, MONGO_URI)
 
 class TestDatabaseServerMongo(ProtocolTest, DBServerTestsuite):
     @classmethod

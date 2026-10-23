@@ -2,7 +2,7 @@
 import unittest
 from common.unittests import ConfigTest
 from common.dcfile import *
-from database.mongo import setup_mongo, teardown_mongo
+from database.mongo import MONGO_INVALID_URI, MONGO_URI, setup_mongo, teardown_mongo
 
 class TestConfigDBMongo(ConfigTest):
     @classmethod
@@ -33,8 +33,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Valid')
 
     def test_dbmongo_reserved_control(self):
@@ -52,8 +52,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_dbmongo_invalid_generate(self):
@@ -71,8 +71,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
@@ -89,8 +89,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 0
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_dbmongo_reserved_generate(self):
@@ -108,8 +108,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
         config = """\
@@ -126,8 +126,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 555
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_dbmongo_boolean_broadcast(self):
@@ -148,8 +148,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Valid')
 
         config = """\
@@ -169,8 +169,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_dbmongo_type_typo(self):
@@ -190,8 +190,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongdb
-                    server: mongodb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_dbmongo_bad_uri(self):
@@ -212,8 +212,8 @@ class TestConfigDBMongo(ConfigTest):
                     max: 1000010
                   backend:
                     type: mongodb
-                    server: baddb://127.0.0.1:57024/test
-            """ % (test_dc)
+                    server: %s
+            """ % (test_dc, MONGO_INVALID_URI)
         self.assertEqual(self.checkConfig(config), 'Invalid')
 
 if __name__ == '__main__':
