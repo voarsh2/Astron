@@ -49,6 +49,16 @@ class Datagram
         buf_offset += sizeof(T);
     }
 
+    template<typename T>
+    void add_swapped_value(T value)
+    {
+        // Keep swap_le's result in the original wire type. Its big-endian
+        // conditional expression otherwise promotes narrower integers to
+        // uint64_t, which would make add_value write eight bytes.
+        const T encoded_value = swap_le(value);
+        add_value(encoded_value);
+    }
+
     void check_add_length(size_t len)
     {
         const size_t max_size = static_cast<size_t>(DGSIZE_MAX);
@@ -257,19 +267,19 @@ class Datagram
     // add_int16 adds a signed 16-bit integer value to the datagram arranged in little-endian.
     void add_int16(const int16_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_int32 adds a signed 32-bit integer value to the datagram arranged in little-endian.
     void add_int32(const int32_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_int64 adds a signed 64-bit integer value to the datagram arranged in little-endian.
     void add_int64(const int64_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_uint8 adds an unsigned 8-bit integer value to the datagram.
@@ -281,31 +291,31 @@ class Datagram
     // add_uint16 adds a unsigned 16-bit integer value to the datagram arranged in little-endian.
     void add_uint16(const uint16_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_uint32 adds a unsigned 32-bit integer value to the datagram arranged in little-endian.
     void add_uint32(const uint32_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_uint64 adds a unsigned 64-bit integer value to the datagram arranged in little-endian.
     void add_uint64(const uint64_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_float32 adds a float (32-bit IEEE 754 floating point) value to the datagram.
     void add_float32(const float &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_float64 adds a double (64-bit IEEE 754 floating point) value to the datagram.
     void add_float64(const double &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_size adds a datagram or field length-tag to the datagram.
@@ -313,7 +323,7 @@ class Datagram
     //       to allow for future support of larger or small length limits.
     void add_size(const dgsize_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_channel adds a channel to the end of the datagram.
@@ -321,7 +331,7 @@ class Datagram
     //       to allow for future support of larger or smaller channel range limits.
     void add_channel(const channel_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_doid adds a distributed object id to the end of the datagram.
@@ -329,7 +339,7 @@ class Datagram
     //       to allow for future support of larger or smaller doid range limits.
     void add_doid(const doid_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_zone adds a zone id to the end of the datagram.
@@ -337,7 +347,7 @@ class Datagram
     //       to allow for future support of larger or smaller zone range limits.
     void add_zone(const zone_t &v)
     {
-        add_value(swap_le(v));
+        add_swapped_value(v);
     }
 
     // add_location adds a parent-zone pair to the datagram; it is provided for convenience,

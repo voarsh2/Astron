@@ -570,50 +570,90 @@ class TestDBStateServer(ProtocolTest):
 
         self.probe_context = 0
 
-        def receive_probe_result(doid, fence_context):
-            received_query = False
-            while True:
-                dg = self.recv_expected(self.database)
-                self.assertIsNotNone(
-                    dg, "Timed out waiting for DBSS range probe fence."
-                )
-
-                dgi = DatagramIterator(dg)
-                is_fence, _ = dgi.matches_header(
-                    [PROBE_FENCE_CHANNEL], 5, PROBE_FENCE_MESSAGE,
-                    remaining=4,
-                )
-                if is_fence:
-                    self.assertEqual(dgi.read_uint32(), fence_context)
-                    return received_query
-
-                dgi = DatagramIterator(dg)
-                self.assertTrue(*dgi.matches_header(
-                    [1200], doid, DBSERVER_OBJECT_GET_ALL,
-                    remaining=4 + DOID_SIZE_BYTES,
-                ))
-                db_context = dgi.read_uint32()
-                self.assertEqual(dgi.read_doid(), doid)
-                self.assertFalse(received_query, "DBSS sent duplicate range probe queries.")
-                received_query = True
-
-                # Reply even to an unexpected query so a failed range
-                # assertion does not leave a pending DBSS context behind.
-                response = Datagram.create(
-                    [doid], 1200, DBSERVER_OBJECT_GET_ALL_RESP
-                )
-                response.add_uint32(db_context)
-                response.add_uint8(SUCCESS)
-                response.add_uint16(DistributedTestObject3)
-                response.add_uint16(1)
-                response.add_uint16(setRDB3)
-                response.add_uint32(1200)
-                self.database.send(response)
-
         def probe(doid):
             self.probe_context += 1
             fence_one = self.probe_context * 2 - 1
             fence_two = self.probe_context * 2
+            failures = []
+            query_count = 0
+            response_types = {
+                DBSERVER_OBJECT_GET_FIELD: DBSERVER_OBJECT_GET_FIELD_RESP,
+                DBSERVER_OBJECT_GET_FIELDS: DBSERVER_OBJECT_GET_FIELDS_RESP,
+                DBSERVER_OBJECT_GET_ALL: DBSERVER_OBJECT_GET_ALL_RESP,
+            }
+
+            def receive_probe_result(fence_context):
+                nonlocal query_count
+                while True:
+                    dg = self.recv_expected(self.database)
+                    if dg is None:
+                        self.fail("Timed out waiting for DBSS range probe fence.")
+
+                    dgi = DatagramIterator(dg)
+                    is_fence, _ = dgi.matches_header(
+                        [PROBE_FENCE_CHANNEL], 5, PROBE_FENCE_MESSAGE,
+                        remaining=4,
+                    )
+                    if is_fence:
+                        actual_context = dgi.read_uint32()
+                        if actual_context != fence_context:
+                            failures.append(
+                                "DBSS probe fence context %d did not match %d." %
+                                (actual_context, fence_context)
+                            )
+                        return
+
+                    # Parse before checking so duplicates and unexpected reads can
+                    # still be answered before any test failure is reported.
+                    dgi = DatagramIterator(dg)
+                    try:
+                        recipient_count = dgi.read_uint8()
+                        recipients = [
+                            dgi.read_channel() for _ in range(recipient_count)
+                        ]
+                        sender = dgi.read_channel()
+                        message_type = dgi.read_uint16()
+                        db_context = dgi.read_uint32()
+                        query_doid = dgi.read_doid()
+                    except EOFError:
+                        failures.append("DBSS sent a truncated range probe request.")
+                        continue
+
+                    response_type = response_types.get(message_type)
+                    if response_type is None:
+                        failures.append(
+                            "DBSS sent unexpected database message type %d." % message_type
+                        )
+                        continue
+
+                    query_is_expected = (
+                        message_type == DBSERVER_OBJECT_GET_ALL and
+                        recipients == [1200] and sender == doid and query_doid == doid and
+                        dgi.tell() == dg.get_size() and not query_count
+                    )
+                    if not query_is_expected:
+                        failures.append(
+                            "Unexpected DBSS range probe: type=%d recipients=%r "
+                            "sender=%d object=%d trailing=%d duplicate=%s" %
+                            (message_type, recipients, sender, query_doid,
+                             dg.get_size() - dgi.tell(), bool(query_count))
+                        )
+                    query_count += 1
+
+                    # Answer the recognized database reads, including unexpected
+                    # types, duplicate queries, and mismatched IDs. Failure replies
+                    # release DBSS contexts without introducing spurious objects.
+                    response = Datagram.create([sender], 1200, response_type)
+                    response.add_uint32(db_context)
+                    if query_is_expected:
+                        response.add_uint8(SUCCESS)
+                        response.add_uint16(DistributedTestObject3)
+                        response.add_uint16(1)
+                        response.add_uint16(setRDB3)
+                        response.add_uint32(1200)
+                    else:
+                        response.add_uint8(FAILURE)
+                    self.database.send(response)
 
             # Try a query all on the id
             dg = Datagram.create([doid], 5, STATESERVER_OBJECT_GET_ALL)
@@ -626,7 +666,7 @@ class TestDBStateServer(ProtocolTest):
             fence.add_uint32(fence_one)
             self.shard.send(fence)
 
-            found_query = receive_probe_result(doid, fence_one)
+            receive_probe_result(fence_one)
 
             # A query caused by the first message can be queued behind its
             # fence in the threaded Message Director. This second same-stream
@@ -636,8 +676,11 @@ class TestDBStateServer(ProtocolTest):
             )
             fence.add_uint32(fence_two)
             self.shard.send(fence)
-            found_query = receive_probe_result(doid, fence_two) or found_query
-            return found_query
+            receive_probe_result(fence_two)
+
+            if failures:
+                self.fail("\n".join(failures))
+            return query_count > 0
 
         self.assertFalse(probe(900))
         self.assertFalse(probe(999))
