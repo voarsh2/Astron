@@ -1,5 +1,8 @@
 #include <ctime>
 #include <cctype>
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+#include <iostream>
+#endif
 
 #include "core/RoleFactory.h"
 #include "config/constraints.h"
@@ -115,6 +118,9 @@ void EventLogger::process_packet(DatagramHandle dg, const uvw::Addr& sender)
     strftime(timestamp, 64, "{\"_time\": \"%Y-%m-%d %H:%M:%S%z\", ", localtime(&rawtime));
 
     *m_file.get() << timestamp << data.substr(1) << std::endl;
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+    std::cout << "ASTRON_TEST_EVENTLOGGER_ENTRY_WRITTEN" << std::endl;
+#endif
 }
 
 void EventLogger::start_receive()

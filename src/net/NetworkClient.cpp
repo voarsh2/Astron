@@ -1,4 +1,5 @@
 #include "NetworkClient.h"
+#include <cstring>
 #include <stdexcept>
 #include "core/global.h"
 #include "config/ConfigVariable.h"
@@ -121,8 +122,10 @@ void NetworkClient::defragment_input(std::unique_lock<std::mutex>& lock)
 {
     while(m_data_buf.size() > sizeof(dgsize_t)) {
         // Enough data to know the expected length of the datagram.
-        dgsize_t data_size = *reinterpret_cast<dgsize_t*>(&m_data_buf[0]);
-        if(m_data_buf.size() >= data_size + sizeof(dgsize_t)) {
+        dgsize_t data_size;
+        std::memcpy(&data_size, m_data_buf.data(), sizeof(data_size));
+        data_size = swap_le(data_size);
+        if(static_cast<size_t>(data_size) <= m_data_buf.size() - sizeof(dgsize_t)) {
             size_t overread_size = (m_data_buf.size() - data_size - sizeof(dgsize_t));
             DatagramPtr dg = Datagram::create(reinterpret_cast<const uint8_t*>(&m_data_buf[sizeof(dgsize_t)]), data_size);
             if(0 < overread_size) {
@@ -154,7 +157,9 @@ void NetworkClient::process_datagram(const std::unique_ptr<char[]>& data, size_t
     if(m_data_buf.size() == 0 && size >= sizeof(dgsize_t)) {
         // Fast-path mode: Check if we have just enough data from the stream for a single datagram.
         // Should occur in most cases, as we're expecting <= the average TCP MSS for most datagrams.
-        dgsize_t datagram_size = *reinterpret_cast<dgsize_t*>(data.get());
+        dgsize_t datagram_size;
+        std::memcpy(&datagram_size, data.get(), sizeof(datagram_size));
+        datagram_size = swap_le(datagram_size);
         if(datagram_size == size - sizeof(dgsize_t)) {
             // Yep. Dispatch to receive_datagram and early-out.
             DatagramPtr dg = Datagram::create(reinterpret_cast<const uint8_t*>(data.get() + sizeof(dgsize_t)), datagram_size);

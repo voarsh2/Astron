@@ -345,6 +345,12 @@ endif()
 install(TARGETS astrond RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 if(ASTRON_ENABLE_INTEGRATION_TESTS)
+    add_executable(test_datagram_safety test/test_datagram_safety.cpp)
+    target_include_directories(test_datagram_safety PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test_datagram_safety PRIVATE dclass)
+
+    add_test(NAME datagram_safety COMMAND test_datagram_safety)
+
     set(ASTRON_PYTHON_TESTS)
     function(astron_add_python_test name script)
         add_test(NAME "${name}"
@@ -379,6 +385,7 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     if(BUILD_CLIENTAGENT)
         astron_add_python_test(clientagent test_clientagent.py)
+        astron_add_python_test(clientagent_pending_object test_clientagent_pending_object.py)
         astron_add_python_test(issue_427 test_issue_427.py)
         astron_add_python_test(validate_config_clientagent test_config_clientagent.py)
     endif()

@@ -42,7 +42,15 @@ public:
           Emitter<T>{},
           std::enable_shared_from_this<T>{}
     {
-        this->get()->data = static_cast<T*>(this);
+    }
+
+    template<typename... Args>
+    static std::shared_ptr<T> create(Args&&... args) {
+        auto resource = std::make_shared<T>(ConstructorAccess{0}, std::forward<Args>(args)...);
+        // The most-derived object is not alive in Resource's constructor, so
+        // install libuv's callback pointer only after construction completes.
+        resource->get()->data = resource.get();
+        return resource;
     }
 
     /**

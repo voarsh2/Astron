@@ -1734,8 +1734,35 @@ array_expansion
 	;
 
 signed_integer
-	: '+' UNSIGNED_INTEGER { $$ = int64_t($2); }
-	| '-' UNSIGNED_INTEGER { $$ = -int64_t($2); }
+	: '+' UNSIGNED_INTEGER
+	{
+		if($2 > static_cast<uint64_t>(INT64_MAX))
+		{
+			parser_error("Number out of range.");
+			$$ = 0;
+		}
+		else
+		{
+			$$ = static_cast<int64_t>($2);
+		}
+	}
+	| '-' UNSIGNED_INTEGER
+	{
+		const uint64_t min_magnitude = static_cast<uint64_t>(INT64_MAX) + 1;
+		if($2 > min_magnitude)
+		{
+			parser_error("Number out of range.");
+			$$ = 0;
+		}
+		else if($2 == min_magnitude)
+		{
+			$$ = INT64_MIN;
+		}
+		else
+		{
+			$$ = -static_cast<int64_t>($2);
+		}
+	}
 	;
 
 array_type_token

@@ -15,6 +15,7 @@ using dclass::Class;
 #include <pthread.h> // for setting thread-local storage size
 #endif
 #include "util/TaskQueue.h"
+#include "util/IntegrationTestHooks.h"
 #include "util/filesystem.h"
 
 using namespace std;
@@ -251,6 +252,7 @@ int main(int argc, char *argv[])
         for(auto it = node.begin(); it != node.end(); ++it) {
             RoleFactory::singleton().instantiate_role((*it)["type"].as<std::string>(), *it);
         }
+        IntegrationTestHooks::configuration_ready();
     }
     // This exception is propogated if astron_shutdown is called
     catch(const ShutdownException& e) {

@@ -684,5 +684,32 @@ class TestMessageDirector(ProtocolTest):
         self.__class__.c1 = self.connectToServer()
         self.l1.flush()
 
+    def test_truncated_embedded_datagram(self):
+        self.l1.flush()
+        self.c1.flush()
+
+        # The embedded datagram claims one byte, but its length tag is the end
+        # of this control message. The Message Director must reject the frame
+        # without reading beyond its backing buffer.
+        dg = Datagram()
+        dg.add_uint8(1)
+        dg.add_channel(CONTROL_CHANNEL)
+        dg.add_uint16(CONTROL_ADD_POST_REMOVE)
+        dg.add_channel(0x1CEDC0FF)
+        dg.add_size(1)
+        self.c1.send(dg)
+        self.assertConnectionClosed(self.c1)
+
+        # Prove the malformed input closed only its participant and did not
+        # crash the daemon under ASan.
+        forwarded = Datagram.create([1234], 4321, 1337)
+        forwarded.add_string('still running')
+        self.c2.send(forwarded)
+        self.expect(self.l1, forwarded)
+
+        self.c1.close()
+        self.__class__.c1 = self.connectToServer()
+        self.l1.flush()
+
 if __name__ == '__main__':
     unittest.main()

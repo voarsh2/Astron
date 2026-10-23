@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import unittest, time, ssl, struct
+import unittest, time, ssl, struct, os
 from socket import socket, AF_INET, SOCK_STREAM, error as socket_error
 from common.unittests import ProtocolTest
 from common.astron import *
@@ -100,6 +100,7 @@ class TestClientAgent(ProtocolTest):
     def assertDisconnect(self, s, reason_code):
         deadline = time.monotonic() + self.RESPONSE_TIMEOUT
         timeout = s.s.gettimeout()
+        message = None
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -112,11 +113,13 @@ class TestClientAgent(ProtocolTest):
                     self.assertEqual(dgi.read_uint16(), reason_code)
                     # According to client_protocol.md, the string must provide some explanation, so
                     # ensure that it is there.
-                    self.assertNotEqual(dgi.read_string(), '')
+                    message = dgi.read_string()
+                    self.assertNotEqual(message, '')
                     break
         finally:
             s.s.settimeout(timeout)
         s.close()
+        return message
 
     def connect(self, do_hello=True, port=57128, tls_opts=None, proxy_header=None):
         s = socket(AF_INET, SOCK_STREAM)
@@ -152,7 +155,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_string('What... am I?')
         client.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None, "No datagram received when attempting identify()")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint8(), 1)
@@ -211,7 +214,11 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint32(DC_HASH)
         dg.add_string('Equestria Online v5.7')
         client.send(dg)
-        self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION)
+        self.assertEqual(
+            self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION),
+            'Client version mismatch: client=Equestria Online v5.7, '
+            'server=Sword Art Online v5.1',
+        )
 
         # Now dchash validation:
         client = self.connect(False)
@@ -235,6 +242,32 @@ class TestClientAgent(ProtocolTest):
 
         client.close()
 
+    def test_oversized_client_version_mismatch(self):
+        if 'USE_32BIT_DATAGRAMS' in os.environ:
+            self.skipTest('The 32-bit datagram maximum is too large for this regression input')
+
+        # The incoming hello fits exactly in one datagram. The version is
+        # client-controlled, so the mismatch response must not echo it into an
+        # eject or event-log datagram.
+        client = self.connect(False)
+        dg = Datagram()
+        dg.add_uint16(CLIENT_HELLO)
+        dg.add_uint32(DC_HASH)
+        dg.add_string('v' * (DGSIZE_MAX - 8))
+        self.assertEqual(len(dg.get_data()), DGSIZE_MAX)
+        client.send(dg)
+        message = self.assertDisconnect(client, CLIENT_DISCONNECT_BAD_VERSION)
+        self.assertEqual(
+            message,
+            'Client version mismatch: client=' + ('v' * 128) +
+            '..., server=Sword Art Online v5.1',
+        )
+
+        # A subsequent normal handshake verifies the ClientAgent stayed
+        # healthy after rejecting the maximum-sized version field.
+        healthy_client = self.connect()
+        healthy_client.close()
+
     def test_anonymous(self):
         self.server.flush()
         # Connect and hello:
@@ -252,7 +285,7 @@ class TestClientAgent(ProtocolTest):
         self.expectNone(client)
 
         # And the server should see the update...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None, "No datagram received while expecting SSObjectSetField")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint8(), 1)
@@ -345,7 +378,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # The update should show up inside the server:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None, "No datagram received while expecting SSObjectSetField")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint8(), 1)
@@ -602,7 +635,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_zone(4321) # Zone
         client.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -936,7 +969,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_zone(5679) # Zone
         client.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1107,7 +1140,7 @@ class TestClientAgent(ProtocolTest):
         # The same N.B. in test_interest applies here
 
         # The CA should've asked for objects in some zones
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1220,7 +1253,7 @@ class TestClientAgent(ProtocolTest):
         # The same N.B. in test_interest applies here
 
         # The CA should've asked for objects in some zones
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1296,7 +1329,7 @@ class TestClientAgent(ProtocolTest):
         # The same N.B. in test_interest applies here
 
         # The CA should've asked for objects in some zones
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1368,7 +1401,7 @@ class TestClientAgent(ProtocolTest):
         # The same N.B. in test_interest applies here
 
         # The CA should've asked for objects in some zones
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1501,7 +1534,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # The CA should've asked for objects in some zones
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1583,7 +1616,7 @@ class TestClientAgent(ProtocolTest):
         #       of the test I'm trying to add because the stateserver doesn't actually implement
         #       STATESERVER_OBJECT_GET_ZONE_OBJECTS, so I'll re-enable this part later when that
         #       has been implemented, and we want to enforce that the behavior has changed
-        #dg = self.server.recv_maybe()
+        #dg = self.recv_expected(self.server)
         #self.assertTrue(dg is not None)
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
@@ -1598,7 +1631,7 @@ class TestClientAgent(ProtocolTest):
         #self.server.send(dg)
 
         # The server asks for objects this way instead for now
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1647,7 +1680,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # Server should ask for the objects:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1896,7 +1929,7 @@ class TestClientAgent(ProtocolTest):
         client3.send(dg)
 
         # Server should ask for the objects:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id3, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -1980,7 +2013,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # CA, of course, asks for objects:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2100,7 +2133,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # CA asks for objects...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2226,7 +2259,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # CA asks for objects...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2281,7 +2314,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # The CA should ask for JUST the difference...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2316,7 +2349,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # The CA should ask for stuff in 8888...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2376,7 +2409,7 @@ class TestClientAgent(ProtocolTest):
         client.send(dg)
 
         # The query goes out to the SS...
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2429,7 +2462,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Client should have the interest forwarded back to it
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "No datagram received while expecting fowarded interest.")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint16(), CLIENT_ADD_INTEREST_MULTIPLE) # MsgType
@@ -2446,7 +2479,7 @@ class TestClientAgent(ProtocolTest):
         self.assertTrue(received_zone in zones) # Zone 2
 
         # Server should ask for the objects:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2583,7 +2616,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # And the client should be informed
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "No datagram received while expecting remove interest.")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint16(), CLIENT_REMOVE_INTEREST) # MsgType
@@ -2634,7 +2667,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Client should have the interest forwarded back to it
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "No datagram received while expecting fowarded interest.")
         dgi = DatagramIterator(dg)
         self.assertEqual(dgi.read_uint16(), CLIENT_ADD_INTEREST) # MsgType
@@ -2648,7 +2681,7 @@ class TestClientAgent(ProtocolTest):
         #       of the test I'm trying to add because the stateserver doesn't actually implement
         #       STATESERVER_OBJECT_GET_ZONE_OBJECTS, so I'll re-enable this part later when that
         #       has been implemented, and we want to enforce that the behavior has changed
-        #dg = self.server.recv_maybe()
+        #dg = self.recv_expected(self.server)
         #self.assertTrue(dg is not None)
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
@@ -2663,7 +2696,7 @@ class TestClientAgent(ProtocolTest):
         #self.server.send(dg)
 
         # INSTEAD WE DO -- Server should ask for the objects:
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1235], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -2872,6 +2905,7 @@ class TestClientAgent(ProtocolTest):
 
         # Ok now lets try to do it with an uberdog
         self.server.send(Datagram.create_remove_channel(10000))
+
         client = self.connect()
         id = self.identify(client)
         self.set_state(client, CLIENT_STATE_ESTABLISHED)
@@ -2920,6 +2954,43 @@ class TestClientAgent(ProtocolTest):
         self.assertDisconnect(client, CLIENT_DISCONNECT_FORBIDDEN_FIELD)
         self.expectNone(self.server)
 
+    def test_fields_sendable_doids_above_uint16(self):
+        self.server.flush()
+
+        low_doid = 10000
+        high_doid = low_doid + (1 << 16)
+        self.server.send(Datagram.create_add_channel(high_doid))
+
+        client = self.connect()
+        client_id = self.identify(client)
+        self.set_state(client, CLIENT_STATE_ESTABLISHED)
+        client.flush()
+
+        for doid in (low_doid, high_doid):
+            declaration = Datagram.create([client_id], 1, CLIENTAGENT_DECLARE_OBJECT)
+            declaration.add_doid(doid)
+            declaration.add_uint16(DistributedTestObject1)
+            self.server.send(declaration)
+
+        # Allow this field on the low object only. The high object has the
+        # same low 16 bits; it must not inherit the low object's permission.
+        sendable = Datagram.create([client_id], 1, CLIENTAGENT_SET_FIELDS_SENDABLE)
+        sendable.add_doid(low_doid)
+        sendable.add_uint16(1)
+        sendable.add_uint16(setBR1)
+        self.server.send(sendable)
+        self.synchronize_clientagent(client_id)
+
+        update = Datagram()
+        update.add_uint16(CLIENT_OBJECT_SET_FIELD)
+        update.add_doid(high_doid)
+        update.add_uint16(setBR1)
+        update.add_string('must not inherit a colliding DOID permission')
+        client.send(update)
+        self.assertDisconnect(client, CLIENT_DISCONNECT_FORBIDDEN_FIELD)
+        self.expectNone(self.server)
+        self.server.send(Datagram.create_remove_channel(high_doid))
+
     def test_session_objects(self):
         self.server.flush()
         self.server.send(Datagram.create_add_channel(10052))
@@ -2946,7 +3017,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Then disconnect the client, and the object should die
@@ -2978,7 +3049,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Then delete the object, the client should be disconnected
@@ -3012,7 +3083,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Then change the object's owner, the client should be disconnected
@@ -3054,7 +3125,7 @@ class TestClientAgent(ProtocolTest):
         #       of the test I'm trying to add because the stateserver doesn't actually implement
         #       STATESERVER_OBJECT_GET_ZONE_OBJECTS, so I'll re-enable this part later when that
         #       has been implemented, and we want to enforce that the behavior has changed
-        #dg = self.server.recv_maybe()
+        #dg = self.recv_expected(self.server)
         #self.assertTrue(dg is not None)
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
@@ -3069,7 +3140,7 @@ class TestClientAgent(ProtocolTest):
         #self.server.send(dg)
 
         # The server asks for objects this way instead for now
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -3136,7 +3207,7 @@ class TestClientAgent(ProtocolTest):
         #       of the test I'm trying to add because the stateserver doesn't actually implement
         #       STATESERVER_OBJECT_GET_ZONE_OBJECTS, so I'll re-enable this part later when that
         #       has been implemented, and we want to enforce that the behavior has changed
-        #dg = self.server.recv_maybe()
+        #dg = self.recv_expected(self.server)
         #self.assertTrue(dg is not None)
         #dgi = DatagramIterator(dg)
         #self.assertTrue(*dgi.matches_header([2345], id, STATESERVER_OBJECT_GET_ZONE_OBJECTS))
@@ -3151,7 +3222,7 @@ class TestClientAgent(ProtocolTest):
         #self.server.send(dg)
 
         # The server asks for objects this way instead for now
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -3221,7 +3292,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Give it ownership of the second object
@@ -3234,7 +3305,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Then delete the object, the client should be disconnected
@@ -3270,7 +3341,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
 
         # Remove that object as a session object
@@ -3307,7 +3378,7 @@ class TestClientAgent(ProtocolTest):
         self.server.send(dg)
 
         # Ignore the data in the entry forwarded to the client, we're not testing that here
-        dg = client.recv_maybe()
+        dg = self.recv_expected(client)
         self.assertTrue(dg is not None, "The client didn't receive a datagram after ENTER_OWNER.")
         client.flush()
 
@@ -3348,7 +3419,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_uint32(1337)
         self.server.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None, "The server didn't receive a datagram. Expecting CLIENTAGENT_GET_NETWORK_ADDRESS_RESP")
 
         dgi = DatagramIterator(dg)
@@ -3405,7 +3476,7 @@ class TestClientAgent(ProtocolTest):
             dg.add_uint32(test_id)
             self.server.send(dg)
 
-            dg = self.server.recv_maybe()
+            dg = self.recv_expected(self.server)
             self.assertTrue(dg is not None, "The server didn't receive a datagram. Expecting CLIENTAGENT_GET_NETWORK_ADDRESS_RESP")
 
             dgi = DatagramIterator(dg)
@@ -3424,7 +3495,7 @@ class TestClientAgent(ProtocolTest):
                 dg.add_uint32(test_id)
                 self.server.send(dg)
 
-                dg = self.server.recv_maybe()
+                dg = self.recv_expected(self.server)
                 self.assertTrue(dg is not None, "The server didn't receive a datagram. Expecting CLIENTAGENT_GET_TLVS_RESP")
 
                 dgi = DatagramIterator(dg)
@@ -3498,7 +3569,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_zone(300) # Zone 1
         client.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1234], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))
@@ -3563,7 +3634,7 @@ class TestClientAgent(ProtocolTest):
         dg.add_zone(400) # Zone 1
         client.send(dg)
 
-        dg = self.server.recv_maybe()
+        dg = self.recv_expected(self.server)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([6666], id, STATESERVER_OBJECT_GET_ZONES_OBJECTS))

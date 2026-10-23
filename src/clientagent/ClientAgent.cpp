@@ -1,4 +1,5 @@
 #include "ClientAgent.h"
+#include "util/IntegrationTestHooks.h"
 #include "ClientFactory.h"
 
 #include "core/global.h"
@@ -82,6 +83,7 @@ ClientAgent::ClientAgent(RoleConfig roleconfig) : Role(roleconfig), m_net_accept
     // Begin listening for new Clients
     m_net_acceptor->bind(bind_addr.get_rval(m_roleconfig), 7198);
     m_net_acceptor->start();
+    IntegrationTestHooks::clientagent_ready();
 }
 
 // handle_tcp generates a new Client object from a raw tcp connection.

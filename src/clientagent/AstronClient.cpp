@@ -408,13 +408,24 @@ class AstronClient : public Client, public NetworkHandler
         string version = dgi.read_string();
 
         if(version != m_client_agent->get_version()) {
-            stringstream ss;
-            ss << "Client version mismatch: client=" << version;
-            if(m_send_version) {
-                ss << ", server=" << m_client_agent->get_version();
+            // The client controls this value and may send a maximum-sized
+            // version string. Keep useful diagnostics while bounding both
+            // values before placing them in eject and event-log datagrams.
+            const size_t max_version_length = 128;
+            string message = "Client version mismatch: client=";
+            message += version.substr(0, max_version_length);
+            if(version.length() > max_version_length) {
+                message += "...";
             }
-
-            send_disconnect(CLIENT_DISCONNECT_BAD_VERSION, ss.str());
+            if(m_send_version) {
+                const string &server_version = m_client_agent->get_version();
+                message += ", server=";
+                message += server_version.substr(0, max_version_length);
+                if(server_version.length() > max_version_length) {
+                    message += "...";
+                }
+            }
+            send_disconnect(CLIENT_DISCONNECT_BAD_VERSION, message);
 
             return;
         }

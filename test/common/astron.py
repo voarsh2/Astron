@@ -1,4 +1,5 @@
 import os, time, socket, struct, tempfile, subprocess, ssl
+from common.process_output import ProcessOutput
 
 __all__ = ['Daemon', 'Datagram', 'DatagramIterator',
            'MDConnection', 'ChannelConnection', 'ClientConnection']
@@ -11,6 +12,27 @@ class Daemon(object):
 
         self.daemon = None
         self.config_file = None
+        self.output = None
+
+    def output_position(self):
+        if self.output is None:
+            raise RuntimeError('Astron output is unavailable in manual launch mode')
+        return self.output.position()
+
+    def wait_for_output(self, marker, timeout=30.0, after=0):
+        if self.output is None:
+            raise RuntimeError('Astron output is unavailable in manual launch mode')
+        return self.output.wait_for(marker, timeout, 'Astron', after)
+
+    def wait_for_output_any(self, markers, timeout=30.0, after=0):
+        if self.output is None:
+            raise RuntimeError('Astron output is unavailable in manual launch mode')
+        return self.output.wait_for_any(markers, timeout, 'Astron', after)
+
+    def wait_for_output_count(self, marker, count, timeout=30.0):
+        if self.output is None:
+            raise RuntimeError('Astron output is unavailable in manual launch mode')
+        self.output.wait_for_count(marker, count, timeout, 'Astron')
 
     def start(self):
         if 'MANUAL_LAUNCH_CONFIG' in os.environ:
@@ -33,34 +55,42 @@ class Daemon(object):
         args += [self.config_file]
 
         try:
-            self.daemon = subprocess.Popen(args)
-
-            deadline = time.monotonic() + 30.0
-            while time.monotonic() < deadline:
-                if self.daemon.poll() is not None:
-                    raise RuntimeError(
-                        'Astron exited during startup with status %d' % self.daemon.returncode
-                    )
-                try:
-                    with socket.create_connection(('127.0.0.1', 57123), timeout=0.1):
-                        return
-                except OSError:
-                    # This interval only backs off readiness polling; startup is
-                    # complete when the Message Director accepts a connection.
-                    time.sleep(0.01)
-
-            raise RuntimeError('Message Director did not become ready within 30 seconds')
+            self.daemon = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,
+            )
+            self.output = ProcessOutput(self.daemon, echo=True)
+            self.wait_for_output('ASTRON_TEST_MESSAGE_DIRECTOR_LISTENING')
+            clientagent_count = sum(
+                line.strip() == '- type: clientagent'
+                for line in self.config.splitlines()
+            )
+            if clientagent_count:
+                self.wait_for_output_count(
+                    'ASTRON_TEST_CLIENTAGENT_READY', clientagent_count
+                )
         except BaseException:
             self.stop()
             raise
 
     def stop(self):
         if self.daemon is not None:
+            process = self.daemon
             if self.daemon.poll() is None:
                 self.daemon.kill()
             # In Windows, kill() is an alias for terminate(), which isn't guaranteed to be instantaneous like SIGKILL signals are on UNIX systems.
             self.daemon.wait()
             self.daemon = None
+            if self.output is not None:
+                self.output.join()
+            if process.stdout is not None:
+                process.stdout.close()
+            self.output = None
         if self.config_file is not None:
             try:
                 os.remove(self.config_file)

@@ -1,6 +1,7 @@
 #include "MDNetworkParticipant.h"
 #include "core/global.h"
 #include "core/msgtypes.h"
+#include "util/IntegrationTestHooks.h"
 
 MDNetworkParticipant::MDNetworkParticipant(const std::shared_ptr<uvw::TcpHandle> &socket)
     : MDParticipantInterface(), m_client(std::make_shared<NetworkClient>(this))
@@ -30,7 +31,9 @@ void MDNetworkParticipant::receive_datagram(DatagramHandle dg)
             uint16_t msg_type = dgi.read_uint16();
             switch(msg_type) {
                 case CONTROL_ADD_CHANNEL: {
-                    subscribe_channel(dgi.read_channel());
+                    channel_t channel = dgi.read_channel();
+                    subscribe_channel(channel);
+                    IntegrationTestHooks::channel_subscribed(channel);
                     break;
                 }
                 case CONTROL_REMOVE_CHANNEL: {
