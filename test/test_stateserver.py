@@ -147,7 +147,7 @@ class TestStateServer(ProtocolTest):
             # The parent is expecting two messages...
             received = False
             for x in range(2):
-                dg = parent.recv_maybe()
+                dg = self.recv_expected(parent)
                 self.assertTrue(dg is not None, msg="Parent did not receive ChangingLocation and/or GetAI")
                 dgi = DatagramIterator(dg)
                 msgtype = dgi.read_uint16()
@@ -375,7 +375,7 @@ class TestStateServer(ProtocolTest):
         # The first object is expecting two messages from the child...
         context = None
         for x in range(2):
-            dg = obj1.recv_maybe()
+            dg = self.recv_expected(obj1)
             self.assertTrue(dg is not None, "Parent did not receive ChangingLocation and/or GetAI")
             dgi = DatagramIterator(dg)
             # ... the second object should ask its parent for the AI channel...
@@ -434,7 +434,7 @@ class TestStateServer(ProtocolTest):
         # The first object is expecting two messages from the child...
         context = None
         for x in range(2):
-            dg = obj1.recv_maybe()
+            dg = self.recv_expected(obj1)
             self.assertTrue(dg is not None, "Parent did not receive ChangingLocation and/or GetAI")
             dgi = DatagramIterator(dg)
             # ... the second object should ask its parent for the AI channel...

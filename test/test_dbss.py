@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import unittest
 from common.unittests import ProtocolTest
 from common.astron import *
@@ -21,7 +22,8 @@ roles:
             max: 9999
 """ % (USE_THREADING, test_dc)
 
-CONTEXT_OFFSET = 1 + (CHANNEL_SIZE_BYTES*2) + 2
+PROBE_FENCE_CHANNEL = 1201
+PROBE_FENCE_MESSAGE = 65535
 
 def appendMeta(datagram, doid=None, parent=None, zone=None, dclass=None):
     if doid is not None:
@@ -33,34 +35,54 @@ def appendMeta(datagram, doid=None, parent=None, zone=None, dclass=None):
     if dclass is not None:
         datagram.add_uint16(dclass)
 
+@unittest.skipIf('MANUAL_LAUNCH_CONFIG' in os.environ,
+                 'DBSS readiness requires captured test daemon output')
 class TestDBStateServer(ProtocolTest):
     @classmethod
     def setUpClass(cls):
         cls.daemon = Daemon(CONFIG)
+        cls.addClassCleanup(cls.daemon.stop)
         cls.daemon.start()
 
         cls.shard = cls.connectToServer()
+        cls.addClassCleanup(cls.shard.close)
+        shard_position = cls.daemon.output_position()
         cls.shard.send(Datagram.create_set_con_name("Shard"))
         cls.shard.send(Datagram.create_add_channel(5))
+        cls.daemon.wait_for_output(
+            'ASTRON_TEST_CHANNEL_SUBSCRIBED:5', after=shard_position
+        )
 
         cls.database = cls.connectToServer()
+        cls.addClassCleanup(cls.database.close)
+        database_position = cls.daemon.output_position()
         cls.database.send(Datagram.create_set_con_name("Database"))
         cls.database.send(Datagram.create_add_channel(1200))
+        cls.database.send(Datagram.create_add_channel(PROBE_FENCE_CHANNEL))
+        # The later fence travels over the same connection, so observing its
+        # subscription also confirms the database channel has been installed.
+        cls.daemon.wait_for_output(
+            'ASTRON_TEST_CHANNEL_SUBSCRIBED:%d' % PROBE_FENCE_CHANNEL,
+            after=database_position,
+        )
 
     @classmethod
     def tearDownClass(cls):
         cls.database.send(Datagram.create_remove_channel(1200))
-        cls.database.close()
+        cls.database.send(Datagram.create_remove_channel(PROBE_FENCE_CHANNEL))
         cls.shard.send(Datagram.create_remove_channel(5))
-        cls.shard.close()
-        cls.daemon.stop()
 
    # Tests the message OBJECT_ACTIVATE_WITH_DEFAULTS{_OTHER,}
     def test_activate(self):
         self.database.flush()
         self.shard.flush()
+        channels_position = self.daemon.output_position()
         self.shard.send(Datagram.create_add_channel(80000<<ZONE_SIZE_BITS|100))
         self.shard.send(Datagram.create_add_channel(80000<<ZONE_SIZE_BITS|101))
+        self.daemon.wait_for_output(
+            'ASTRON_TEST_CHANNEL_SUBSCRIBED:%d' % (80000<<ZONE_SIZE_BITS|101),
+            after=channels_position,
+        )
 
         doid1 = 9001
         doid2 = 9002
@@ -72,7 +94,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
@@ -132,7 +154,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
@@ -176,7 +198,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid2, DBSERVER_OBJECT_GET_ALL,
@@ -212,7 +234,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
@@ -252,7 +274,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
@@ -280,7 +302,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_ALL,
@@ -364,7 +386,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # The dbss asks for values for the object from the database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid2, DBSERVER_OBJECT_GET_ALL,
@@ -418,7 +440,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Give the DBSS values from the database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_ALL,
@@ -463,7 +485,7 @@ class TestDBStateServer(ProtocolTest):
 
         # DBSS should request the value of foo from the DBSS
         msgtype, context = None, None
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None) # Expecting DB_GET_FIELD(S)
         dgi = DatagramIterator(dg)
         # Will expect either GET_FIELD...
@@ -522,7 +544,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Reply to database_get_all with object does not exist (was deleted)
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid3, DBSERVER_OBJECT_GET_ALL,
@@ -547,34 +569,75 @@ class TestDBStateServer(ProtocolTest):
         self.shard.flush()
 
         self.probe_context = 0
+
+        def receive_probe_result(doid, fence_context):
+            received_query = False
+            while True:
+                dg = self.recv_expected(self.database)
+                self.assertIsNotNone(
+                    dg, "Timed out waiting for DBSS range probe fence."
+                )
+
+                dgi = DatagramIterator(dg)
+                is_fence, _ = dgi.matches_header(
+                    [PROBE_FENCE_CHANNEL], 5, PROBE_FENCE_MESSAGE,
+                    remaining=4,
+                )
+                if is_fence:
+                    self.assertEqual(dgi.read_uint32(), fence_context)
+                    return received_query
+
+                dgi = DatagramIterator(dg)
+                self.assertTrue(*dgi.matches_header(
+                    [1200], doid, DBSERVER_OBJECT_GET_ALL,
+                    remaining=4 + DOID_SIZE_BYTES,
+                ))
+                db_context = dgi.read_uint32()
+                self.assertEqual(dgi.read_doid(), doid)
+                self.assertFalse(received_query, "DBSS sent duplicate range probe queries.")
+                received_query = True
+
+                # Reply even to an unexpected query so a failed range
+                # assertion does not leave a pending DBSS context behind.
+                response = Datagram.create(
+                    [doid], 1200, DBSERVER_OBJECT_GET_ALL_RESP
+                )
+                response.add_uint32(db_context)
+                response.add_uint8(SUCCESS)
+                response.add_uint16(DistributedTestObject3)
+                response.add_uint16(1)
+                response.add_uint16(setRDB3)
+                response.add_uint32(1200)
+                self.database.send(response)
+
         def probe(doid):
             self.probe_context += 1
+            fence_one = self.probe_context * 2 - 1
+            fence_two = self.probe_context * 2
 
             # Try a query all on the id
             dg = Datagram.create([doid], 5, STATESERVER_OBJECT_GET_ALL)
             dg.add_uint32(self.probe_context) # Context
             dg.add_doid(doid)
             self.shard.send(dg)
+            fence = Datagram.create(
+                [PROBE_FENCE_CHANNEL], 5, PROBE_FENCE_MESSAGE
+            )
+            fence.add_uint32(fence_one)
+            self.shard.send(fence)
 
-            # Check if received database query
-            dg = self.database.recv_maybe()
-            if dg is None:
-                return False
+            found_query = receive_probe_result(doid, fence_one)
 
-            # Cleanup message
-            dgi = DatagramIterator(dg)
-            dgi.seek(CONTEXT_OFFSET)
-            context = dgi.read_uint32() # Get context
-            dg = Datagram.create([doid], 1200, DBSERVER_OBJECT_GET_ALL_RESP)
-            dg.add_uint32(context)
-            dg.add_uint8(SUCCESS)
-            dg.add_uint16(DistributedTestObject3)
-            dg.add_uint16(1)
-            dg.add_uint16(setRDB3)
-            dg.add_uint32(1200)
-            self.database.send(dg)
-            self.shard.flush()
-            return True
+            # A query caused by the first message can be queued behind its
+            # fence in the threaded Message Director. This second same-stream
+            # fence drains that work before the test judges the result.
+            fence = Datagram.create(
+                [PROBE_FENCE_CHANNEL], 5, PROBE_FENCE_MESSAGE
+            )
+            fence.add_uint32(fence_two)
+            self.shard.send(fence)
+            found_query = receive_probe_result(doid, fence_two) or found_query
+            return found_query
 
         self.assertFalse(probe(900))
         self.assertFalse(probe(999))
@@ -696,7 +759,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], 9031, DBSERVER_OBJECT_GET_ALL,
@@ -821,7 +884,7 @@ class TestDBStateServer(ProtocolTest):
         self.expectNone(self.database)
 
         # Updated values should be returned from DBSS
-        dg = self.shard.recv_maybe()
+        dg = self.recv_expected(self.shard)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([5], 9031, STATESERVER_OBJECT_GET_ALL_RESP))
@@ -863,7 +926,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect database query
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None) # Expecting DBGetField
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELD))
@@ -918,7 +981,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect database query
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None) #Expecting DBGetFields
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELDS))
@@ -963,7 +1026,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect database query
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None) #Expecting DBGetFields
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid1, DBSERVER_OBJECT_GET_FIELDS))
@@ -1019,7 +1082,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid, DBSERVER_OBJECT_GET_ALL,
@@ -1056,7 +1119,7 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(dg)
 
         # Expect values to be retrieved from database
-        dg = self.database.recv_maybe()
+        dg = self.recv_expected(self.database)
         self.assertTrue(dg is not None)
         dgi = DatagramIterator(dg)
         self.assertTrue(*dgi.matches_header([1200], doid, DBSERVER_OBJECT_GET_ALL,
