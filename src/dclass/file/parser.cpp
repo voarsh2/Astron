@@ -3299,13 +3299,38 @@ yyreduce:
 
   case 154:
 #line 1737 "parser.ypp" /* yacc.c:1646  */
-    { (yyval.u.int64) = int64_t((yyvsp[0].u.uint64)); }
+    {
+		if((yyvsp[0].u.uint64) > static_cast<uint64_t>(INT64_MAX))
+		{
+			parser_error("Number out of range.");
+			(yyval.u.int64) = 0;
+		}
+		else
+		{
+			(yyval.u.int64) = static_cast<int64_t>((yyvsp[0].u.uint64));
+		}
+	}
 #line 3304 "parser.cpp" /* yacc.c:1646  */
     break;
 
   case 155:
-#line 1738 "parser.ypp" /* yacc.c:1646  */
-    { (yyval.u.int64) = -int64_t((yyvsp[0].u.uint64)); }
+#line 1749 "parser.ypp" /* yacc.c:1646  */
+    {
+		const uint64_t min_magnitude = static_cast<uint64_t>(INT64_MAX) + 1;
+		if((yyvsp[0].u.uint64) > min_magnitude)
+		{
+			parser_error("Number out of range.");
+			(yyval.u.int64) = 0;
+		}
+		else if((yyvsp[0].u.uint64) == min_magnitude)
+		{
+			(yyval.u.int64) = INT64_MIN;
+		}
+		else
+		{
+			(yyval.u.int64) = -static_cast<int64_t>((yyvsp[0].u.uint64));
+		}
+	}
 #line 3310 "parser.cpp" /* yacc.c:1646  */
     break;
 
