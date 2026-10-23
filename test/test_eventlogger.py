@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import unittest, time, socket, os, json, tempfile
+import unittest, socket, os, json, tempfile
 from common.astron import *
 from common.dcfile import *
 
@@ -23,29 +23,27 @@ roles:
 STANDARD_EVENT = b'\x82\xa3bar\xa3baz\xa4type\xa3foo' # MessagePack formatted event
 NONSTANDARD_MSGPACK = b'{'
 
+@unittest.skipIf('MANUAL_LAUNCH_CONFIG' in os.environ,
+                 'EventLogger tests require captured test daemon output')
 class TestEventLogger(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         logHandle, cls.log_file = tempfile.mkstemp(prefix = 'astron-', suffix = '.log')
         os.close(logHandle)
+        cls.addClassCleanup(os.remove, cls.log_file)
 
         cls.daemon = Daemon(CONFIG % cls.log_file)
+        cls.addClassCleanup(cls.daemon.stop)
         cls.daemon.start()
 
         cls.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        cls.addClassCleanup(cls.socket.close)
 
         md_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         md_socket.connect(MD_ADDR)
         cls.mdsocket = MDConnection(md_socket)
+        cls.addClassCleanup(cls.mdsocket.close)
         cls.waitForLogLines(1) # Wait for the EventLogger's startup event.
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.socket.close()
-        cls.mdsocket.close()
-        cls.daemon.stop()
-        if cls.log_file is not None:
-            os.remove(cls.log_file)
 
     @classmethod
     def numLinesLog(cls):
@@ -54,16 +52,11 @@ class TestEventLogger(unittest.TestCase):
 
     @classmethod
     def waitForLogLines(cls, count):
-        # The log file is the event logger's observable output. Poll for that
-        # condition with a deadline; the polling interval is only a backoff.
-        deadline = time.monotonic() + LOG_WAIT_TIMEOUT
-        while time.monotonic() < deadline:
-            if cls.numLinesLog() >= count:
-                return
-            if cls.daemon.daemon.poll() is not None:
-                raise RuntimeError("Astron exited before writing the expected event.")
-            time.sleep(0.01)
-        raise RuntimeError("Timed out waiting for the event logger output.")
+        # EventLogger emits this test signal after flushing its output file. Waiting
+        # on Astron's captured output avoids polling the file or sleeping.
+        cls.daemon.wait_for_output_count(
+            'ASTRON_TEST_EVENTLOGGER_ENTRY_WRITTEN', count, timeout=LOG_WAIT_TIMEOUT
+        )
 
     def test_writesToLog(self):
         numLines1 = self.numLinesLog()

@@ -3,54 +3,104 @@
 
 #ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <string>
 #endif
 
 #include <utility>
 
-void IntegrationTestHooks::run_after_interest_timeout_setup_delay(
+void IntegrationTestHooks::run_after_interest_timeout_setup(
     std::function<void()> continuation)
 {
 #ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
-    const char* value = std::getenv("ASTRON_TEST_DELAY_INTEREST_TIMEOUT_SETUP_MS");
-    if(value != nullptr) {
-        char* end = nullptr;
-        const unsigned long delay_ms = std::strtoul(value, &end, 10);
-        if(end != value && *end == '\0' && delay_ms > 0 && delay_ms <= 10000) {
-            const char* release_value = std::getenv(
-                "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RELEASE_FILE");
-            const std::string release_path = release_value == nullptr ? "" : release_value;
-            const char* marker_value = std::getenv(
-                "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED_FILE");
-            const std::string marker_path = marker_value == nullptr ? "" : marker_value;
+    const char* release_value = std::getenv(
+        "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RELEASE_FILE");
+    if(release_value != nullptr && *release_value != '\0') {
+        const std::filesystem::path release_directory(release_value);
 
-            // Keep polling the event loop until the test releases this
-            // continuation. This makes completion/disconnect ordering
-            // deterministic instead of relying on a delay beating the runner.
-            auto timer = g_loop->resource<uvw::TimerHandle>();
-            timer->on<uvw::TimerEvent>(
-                [continuation = std::move(continuation), release_path, marker_path](
-                    const uvw::TimerEvent&, uvw::TimerHandle& handle) mutable {
-                    if(!release_path.empty() && !std::ifstream(release_path).good()) {
-                        return;
+        // The regression test holds this continuation until it has observed
+        // interest completion or client removal. Watch the containing
+        // directory; the test atomically renames a fully written release file
+        // into it, so the callback never observes a partially written gate.
+        auto watcher = g_loop->resource<uvw::FsEventHandle>();
+        watcher->on<uvw::FsEventEvent>(
+            [continuation = std::move(continuation), release_directory](
+                const uvw::FsEventEvent&, uvw::FsEventHandle& handle) mutable {
+                std::error_code error;
+                std::filesystem::path released_file;
+                for(const auto& entry : std::filesystem::directory_iterator(
+                        release_directory, error)) {
+                    const std::string filename = entry.path().filename().string();
+                    if(filename.rfind("release-", 0) != 0) {
+                        continue;
                     }
 
-                    handle.stop();
-                    handle.close();
-                    continuation();
-
-                    if(!marker_path.empty()) {
-                        std::ofstream marker(marker_path, std::ios::app);
-                        marker << "resumed\n";
+                    std::ifstream release_file(entry.path());
+                    std::string state;
+                    if(release_file >> state && state == "release") {
+                        released_file = entry.path();
+                        break;
                     }
-                });
-            timer->start(
-                uvw::TimerHandle::Time{delay_ms},
-                uvw::TimerHandle::Time{release_path.empty() ? 0 : 10});
+                }
+                if(error) {
+                    std::cerr << "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_WATCH_ERROR: "
+                              << error.message() << std::endl;
+                    return;
+                }
+                if(released_file.empty()) {
+                    return;
+                }
+
+                handle.stop();
+                handle.close();
+                std::filesystem::remove(released_file, error);
+                continuation();
+                std::cout << "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED" << std::endl;
+            });
+        watcher->on<uvw::ErrorEvent>([](const uvw::ErrorEvent& event, uvw::FsEventHandle&) {
+            std::cerr << "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_WATCH_ERROR: "
+                      << event.what() << std::endl;
+        });
+        try {
+            watcher->start(release_directory.string());
+        } catch(const std::exception& error) {
+            std::cerr << "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_WATCH_ERROR: "
+                      << error.what() << std::endl;
             return;
         }
+        std::cout << "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_GATE_READY" << std::endl;
+        return;
     }
 #endif
     continuation();
+}
+
+void IntegrationTestHooks::message_director_listening()
+{
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+    std::cout << "ASTRON_TEST_MESSAGE_DIRECTOR_LISTENING" << std::endl;
+#endif
+}
+
+void IntegrationTestHooks::clientagent_ready()
+{
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+    std::cout << "ASTRON_TEST_CLIENTAGENT_READY" << std::endl;
+#endif
+}
+
+void IntegrationTestHooks::channel_subscribed(channel_t channel)
+{
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+    std::cout << "ASTRON_TEST_CHANNEL_SUBSCRIBED:" << channel << std::endl;
+#endif
+}
+
+void IntegrationTestHooks::configuration_ready()
+{
+#ifdef ASTRON_ENABLE_INTEGRATION_TEST_HOOKS
+    std::cout << "ASTRON_TEST_CONFIGURATION_READY" << std::endl;
+#endif
 }

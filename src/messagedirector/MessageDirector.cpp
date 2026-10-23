@@ -10,6 +10,7 @@
 #include "net/TcpAcceptor.h"
 #include "MDNetworkParticipant.h"
 #include "MDNetworkUpstream.h"
+#include "util/IntegrationTestHooks.h"
 
 static ConfigGroup md_config("messagedirector");
 static ConfigVariable<std::string> bind_addr("bind", "unspecified", md_config);
@@ -58,6 +59,7 @@ void MessageDirector::init_network()
             m_net_acceptor = std::unique_ptr<TcpAcceptor>(new TcpAcceptor(callback, err_callback));
             m_net_acceptor->bind(bind_addr.get_val(), 7199);
             m_net_acceptor->start();
+            IntegrationTestHooks::message_director_listening();
         }
 
         // Connect to upstream server and start handling received messages

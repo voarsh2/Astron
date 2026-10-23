@@ -105,10 +105,10 @@ void Client::generate_timeout(TimeoutSetCallback timeout_set_callback)
 
     if(std::this_thread::get_id() != g_main_thread_id) {
         TaskQueue::singleton.enqueue_task([setup = std::move(setup_timeout)]() mutable {
-            IntegrationTestHooks::run_after_interest_timeout_setup_delay(std::move(setup));
+            IntegrationTestHooks::run_after_interest_timeout_setup(std::move(setup));
         });
     } else {
-        IntegrationTestHooks::run_after_interest_timeout_setup_delay(std::move(setup_timeout));
+        IntegrationTestHooks::run_after_interest_timeout_setup(std::move(setup_timeout));
     }
 }
 

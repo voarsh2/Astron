@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Regression reproducer for issue #427's fast server-side interest path."""
 
-import time
 import unittest
 import os
+import shutil
 import tempfile
-from pathlib import Path
 from socket import AF_INET, SOCK_STREAM, socket
 
 from common.astron import *
@@ -46,50 +45,29 @@ roles:
 """ % (USE_THREADING, test_dc)
 
 
+@unittest.skipIf('MANUAL_LAUNCH_CONFIG' in os.environ,
+                 'issue #427 requires the test daemon output and control gate')
 class TestIssue427(ProtocolTest):
     @classmethod
     def setUpClass(cls):
         # The test-only build hook defers timeout setup without blocking the
         # main loop, making it possible to exercise completion and disconnect
         # before the setup callback runs.
-        marker_fd, cls.timeout_setup_marker = tempfile.mkstemp(
-            prefix="astron-issue-427-resumed-"
-        )
-        os.close(marker_fd)
-        release_fd, cls.timeout_setup_release = tempfile.mkstemp(
+        cls.timeout_setup_release = tempfile.mkdtemp(
             prefix="astron-issue-427-release-"
         )
-        os.close(release_fd)
-        os.unlink(cls.timeout_setup_release)
-
-        previous_delay = os.environ.get("ASTRON_TEST_DELAY_INTEREST_TIMEOUT_SETUP_MS")
-        previous_marker = os.environ.get(
-            "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED_FILE"
-        )
+        cls.addClassCleanup(cls._remove_timeout_setup_gate, cls.timeout_setup_release)
         previous_release = os.environ.get(
             "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RELEASE_FILE"
-        )
-        os.environ["ASTRON_TEST_DELAY_INTEREST_TIMEOUT_SETUP_MS"] = "1000"
-        os.environ["ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED_FILE"] = (
-            cls.timeout_setup_marker
         )
         os.environ["ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RELEASE_FILE"] = (
             cls.timeout_setup_release
         )
         cls.daemon = Daemon(CONFIG)
+        cls.addClassCleanup(cls.daemon.stop)
         try:
             cls.daemon.start()
         finally:
-            if previous_delay is None:
-                os.environ.pop("ASTRON_TEST_DELAY_INTEREST_TIMEOUT_SETUP_MS", None)
-            else:
-                os.environ["ASTRON_TEST_DELAY_INTEREST_TIMEOUT_SETUP_MS"] = previous_delay
-            if previous_marker is None:
-                os.environ.pop("ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED_FILE", None)
-            else:
-                os.environ["ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED_FILE"] = (
-                    previous_marker
-                )
             if previous_release is None:
                 os.environ.pop("ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RELEASE_FILE", None)
             else:
@@ -97,36 +75,57 @@ class TestIssue427(ProtocolTest):
                     previous_release
                 )
         cls.server = cls.connectToServer()
-        for channel in (5, 1015, 1234):
+        cls.addClassCleanup(cls.server.close)
+        position = cls.daemon.output_position()
+        for channel in (5, 1234, 1015):
             cls.server.send(Datagram.create_add_channel(channel))
+        cls.daemon.wait_for_output(
+            'ASTRON_TEST_CHANNEL_SUBSCRIBED:1015',
+            after=position,
+        )
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.close()
-        cls.daemon.stop()
-        os.unlink(cls.timeout_setup_marker)
-        if os.path.exists(cls.timeout_setup_release):
-            os.unlink(cls.timeout_setup_release)
+    @staticmethod
+    def _remove_timeout_setup_gate(path):
+        if os.path.exists(path):
+            shutil.rmtree(path)
 
-    def reset_timeout_setup_marker(self):
-        Path(self.timeout_setup_marker).write_text("", encoding="utf-8")
-        if os.path.exists(self.timeout_setup_release):
-            os.unlink(self.timeout_setup_release)
+    def wait_for_timeout_setup_gate(self, after):
+        line = self.daemon.wait_for_output_any(
+            (
+                "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_GATE_READY",
+                "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_WATCH_ERROR",
+            ),
+            timeout=5.0,
+            after=after,
+        )
+        self.assertIn(
+            "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_GATE_READY",
+            line,
+            "Timeout setup gate watcher failed: " + line,
+        )
 
     def release_timeout_setup(self):
-        Path(self.timeout_setup_release).touch()
+        self.timeout_setup_output_position = self.daemon.output_position()
+        file_descriptor, temporary_path = tempfile.mkstemp(
+            prefix=".stage-", dir=self.timeout_setup_release
+        )
+        release_path = os.path.join(
+            self.timeout_setup_release, "release-" + os.path.basename(temporary_path)
+        )
+        try:
+            with os.fdopen(file_descriptor, "w") as gate:
+                gate.write("release\n")
+            os.replace(temporary_path, release_path)
+        finally:
+            if os.path.exists(temporary_path):
+                os.unlink(temporary_path)
 
     def wait_for_timeout_setup_resume(self):
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            if "resumed\n" in Path(self.timeout_setup_marker).read_text(
-                encoding="utf-8"
-            ):
-                return
-            if self.daemon.daemon.poll() is not None:
-                self.fail("Astron exited before deferred timeout setup resumed.")
-            time.sleep(0.01)
-        self.fail("Deferred timeout setup callback did not resume.")
+        self.daemon.wait_for_output(
+            "ASTRON_TEST_INTEREST_TIMEOUT_SETUP_RESUMED",
+            timeout=5.0,
+            after=self.timeout_setup_output_position,
+        )
 
     def connect(self):
         client_socket = socket(AF_INET, SOCK_STREAM)
@@ -229,8 +228,9 @@ class TestIssue427(ProtocolTest):
         add_interest.add_uint16(1)
         add_interest.add_doid(parent_id)
         add_interest.add_zone(30000)
-        self.reset_timeout_setup_marker()
+        gate_output_position = self.daemon.output_position()
         self.server.send(add_interest)
+        self.wait_for_timeout_setup_gate(gate_output_position)
 
         response = self.recv_expected(self.server)
         self.assertIsNotNone(
@@ -271,8 +271,9 @@ class TestIssue427(ProtocolTest):
         add_interest.add_uint16(2)
         add_interest.add_doid(600000)
         add_interest.add_zone(30001)
-        self.reset_timeout_setup_marker()
+        gate_output_position = self.daemon.output_position()
         self.server.send(add_interest)
+        self.wait_for_timeout_setup_gate(gate_output_position)
 
         client_interest = self.recv_expected(client)
         self.assertIsNotNone(client_interest, "ClientAgent did not forward the interest.")
