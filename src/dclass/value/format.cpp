@@ -1,5 +1,6 @@
 // Filename: format.cpp
 #include <cctype>  // std::isprint()
+#include <cstring>
 #include <sstream> // std::ostringstream
 #include "dc/DistributedType.h"
 #include "dc/ArrayType.h"
@@ -28,12 +29,12 @@ struct Formatter {
     size_t end;
 
     Formatter(const vector<uint8_t> &in, ostream &out) :
-        in(&in[0]), out(out), offset(0), end(in.size())
+        in(in.data()), out(out), offset(0), end(in.size())
     {
     }
 
     Formatter(const string &in, ostream &out) :
-        in((const uint8_t*)&in[0]), out(out), offset(0), end(in.size())
+        in((const uint8_t*)in.data()), out(out), offset(0), end(in.size())
     {
     }
 
@@ -42,16 +43,23 @@ struct Formatter {
     {
     }
 
+    template<typename T>
+    T read_value()
+    {
+        T value;
+        std::memcpy(&value, in + offset, sizeof(T));
+        offset += sizeof(T);
+        return value;
+    }
+
     inline bool remaining(sizetag_t length)
     {
-        return (offset + length) <= end;
+        return offset <= end && static_cast<size_t>(length) <= end - offset;
     }
 
     inline sizetag_t read_length()
     {
-        sizetag_t v = swap_le(*(sizetag_t*)(in + offset));
-        offset += sizeof(sizetag_t);
-        return v;
+        return swap_le(read_value<sizetag_t>());
     }
 
     bool format(const DistributedType* dtype)
@@ -66,8 +74,7 @@ struct Formatter {
             if(!remaining(sizeof(int8_t))) {
                 return false;
             }
-            int v = *(int8_t*)(in + offset);
-            offset += sizeof(int8_t);
+            int v = read_value<int8_t>();
             out << v;
             break;
         }
@@ -75,8 +82,7 @@ struct Formatter {
             if(!remaining(sizeof(int16_t))) {
                 return false;
             }
-            int v = swap_le(*(int16_t*)(in + offset));
-            offset += sizeof(int16_t);
+            int v = swap_le(read_value<int16_t>());
             out << v;
             break;
         }
@@ -84,8 +90,7 @@ struct Formatter {
             if(!remaining(sizeof(int32_t))) {
                 return false;
             }
-            int v = swap_le(*(int32_t*)(in + offset));
-            offset += sizeof(int32_t);
+            int v = swap_le(read_value<int32_t>());
             out << v;
             break;
         }
@@ -93,8 +98,7 @@ struct Formatter {
             if(!remaining(sizeof(int64_t))) {
                 return false;
             }
-            int64_t v = swap_le(*(int64_t*)(in + offset));
-            offset += sizeof(int64_t);
+            int64_t v = swap_le(read_value<int64_t>());
             out << v;
             break;
         }
@@ -102,8 +106,7 @@ struct Formatter {
             if(!remaining(sizeof(uint8_t))) {
                 return false;
             }
-            unsigned int v = *(uint8_t*)(in + offset);
-            offset += sizeof(uint8_t);
+            unsigned int v = read_value<uint8_t>();
             out << v;
             break;
         }
@@ -111,8 +114,7 @@ struct Formatter {
             if(!remaining(sizeof(uint16_t))) {
                 return false;
             }
-            unsigned int v = swap_le(*(uint16_t*)(in + offset));
-            offset += sizeof(uint16_t);
+            unsigned int v = swap_le(read_value<uint16_t>());
             out << v;
             break;
         }
@@ -120,8 +122,7 @@ struct Formatter {
             if(!remaining(sizeof(uint32_t))) {
                 return false;
             }
-            unsigned int v = swap_le(*(uint32_t*)(in + offset));
-            offset += sizeof(uint32_t);
+            unsigned int v = swap_le(read_value<uint32_t>());
             out << v;
             break;
         }
@@ -129,8 +130,7 @@ struct Formatter {
             if(!remaining(sizeof(uint64_t))) {
                 return false;
             }
-            uint64_t v = swap_le(*(uint64_t*)(in + offset));
-            offset += sizeof(uint64_t);
+            uint64_t v = swap_le(read_value<uint64_t>());
             out << v;
             break;
         }
@@ -138,8 +138,7 @@ struct Formatter {
             if(!remaining(sizeof(float))) {
                 return false;
             }
-            float v = (float)swap_le(*(float*)(in + offset));
-            offset += sizeof(float);
+            float v = swap_le(read_value<float>());
             out << v;
             break;
         }
@@ -147,8 +146,7 @@ struct Formatter {
             if(!remaining(sizeof(double))) {
                 return false;
             }
-            double v = (double)swap_le(*(double*)(in + offset));
-            offset += sizeof(double);
+            double v = swap_le(read_value<double>());
             out << v;
             break;
         }
@@ -156,9 +154,8 @@ struct Formatter {
             if(!remaining(sizeof(char))) {
                 return false;
             }
-            char v = *(char*)(in + offset);
+            char v = read_value<char>();
             format_quoted('\'', string(1, v), out);
-            offset += sizeof(char);
             break;
         }
         case T_STRING: {

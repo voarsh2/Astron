@@ -5,7 +5,7 @@
 #include <sstream>
 #include <exception>
 #include <stdexcept>
-#include <string.h> // memcpy
+#include <cstring>
 #include <memory>
 #include "core/types.h"
 #include "dclass/util/byteorder.h"
@@ -41,23 +41,49 @@ class Datagram
     size_t buf_cap; // Can be larger than buf_offset, so use a size_t
     size_t buf_offset;
 
-    void check_add_length(dgsize_t len)
+    template<typename T>
+    void add_value(T value)
     {
-        size_t new_offset = buf_offset + len;
-        if(new_offset > DGSIZE_MAX) {
+        check_add_length(sizeof(T));
+        std::memcpy(buf + buf_offset, &value, sizeof(T));
+        buf_offset += sizeof(T);
+    }
+
+    void check_add_length(size_t len)
+    {
+        const size_t max_size = static_cast<size_t>(DGSIZE_MAX);
+        if(buf_offset > max_size || len > max_size - buf_offset) {
             std::stringstream err_str;
-            err_str << "dg tried to add data past max datagram size, buf_offset+len("
-                    << new_offset << ")" << " max_size(" << DGSIZE_MAX << ")" << std::endl;
+            err_str << "dg tried to add data past max datagram size, buf_offset(" << buf_offset
+                    << ") + len(" << len << ") max_size(" << max_size << ")" << std::endl;
             throw DatagramOverflow(err_str.str());
         }
 
+        const size_t new_offset = buf_offset + len;
         if(new_offset > buf_cap) {
-            uint8_t *tmp_buf = new uint8_t[buf_cap + len + 64];
-            memcpy(tmp_buf, buf, buf_cap);
+            const size_t growth = 64;
+            const size_t new_capacity = new_offset <= max_size - growth
+                ? new_offset + growth : max_size;
+            uint8_t *tmp_buf = new uint8_t[new_capacity];
+            if(buf_offset) {
+                std::memcpy(tmp_buf, buf, buf_offset);
+            }
             delete [] buf;
             buf = tmp_buf;
-            buf_cap = buf_cap + len + 64;
+            buf_cap = new_capacity;
         }
+    }
+
+    void check_add_sized_length(size_t length)
+    {
+        const size_t max_size = static_cast<size_t>(DGSIZE_MAX);
+        if(length > max_size - sizeof(dgsize_t)) {
+            std::stringstream err_str;
+            err_str << "dg length-prefixed payload exceeds max datagram size, payload_length("
+                    << length << ") max_size(" << max_size << ")" << std::endl;
+            throw DatagramOverflow(err_str.str());
+        }
+        check_add_length(sizeof(dgsize_t) + length);
     }
     // default-constructor:
     //     creates a new datagram with some pre-allocated space
@@ -83,7 +109,9 @@ class Datagram
     Datagram(const Datagram &dg) : buf(new uint8_t[dg.size()]), buf_cap(dg.size()),
         buf_offset(dg.size())
     {
-        memcpy(buf, dg.buf, dg.size());
+        if(dg.size()) {
+            std::memcpy(buf, dg.buf, dg.size());
+        }
     }
 
     // shallow-constructor:
@@ -98,7 +126,9 @@ class Datagram
     Datagram(const uint8_t *data, dgsize_t length) : buf(new uint8_t[length]), buf_cap(length),
         buf_offset(length)
     {
-        memcpy(buf, data, length);
+        if(length) {
+            std::memcpy(buf, data, length);
+        }
     }
 
     // binary-constructor(vector):
@@ -106,7 +136,9 @@ class Datagram
     Datagram(const std::vector<uint8_t> &data) : buf(new uint8_t[data.size()]),
         buf_cap(data.size()), buf_offset(data.size())
     {
-        memcpy(buf, &data[0], data.size());
+        if(!data.empty()) {
+            std::memcpy(buf, data.data(), data.size());
+        }
     }
 
     // binary-constructor(string):
@@ -114,7 +146,9 @@ class Datagram
     Datagram(const std::string &data) : buf(new uint8_t[data.length()]), buf_cap(data.length()),
         buf_offset(data.length())
     {
-        memcpy(buf, data.c_str(), data.length());
+        if(!data.empty()) {
+            std::memcpy(buf, data.data(), data.length());
+        }
     }
 
     // server-header-constructor(single-receiver):
@@ -217,81 +251,61 @@ class Datagram
     // add_int8 adds a signed 8-bit integer value to the datagram.
     void add_int8(const int8_t &v)
     {
-        check_add_length(1);
-        *(int8_t *)(buf + buf_offset) = v;
-        buf_offset += 1;
+        add_value(v);
     }
 
     // add_int16 adds a signed 16-bit integer value to the datagram arranged in little-endian.
     void add_int16(const int16_t &v)
     {
-        check_add_length(2);
-        *(int16_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 2;
+        add_value(swap_le(v));
     }
 
     // add_int32 adds a signed 32-bit integer value to the datagram arranged in little-endian.
     void add_int32(const int32_t &v)
     {
-        check_add_length(4);
-        *(int32_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 4;
+        add_value(swap_le(v));
     }
 
     // add_int64 adds a signed 64-bit integer value to the datagram arranged in little-endian.
     void add_int64(const int64_t &v)
     {
-        check_add_length(8);
-        *(int64_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 8;
+        add_value(swap_le(v));
     }
 
     // add_uint8 adds an unsigned 8-bit integer value to the datagram.
     void add_uint8(const uint8_t &v)
     {
-        check_add_length(1);
-        *(uint8_t *)(buf + buf_offset) = v;
-        buf_offset += 1;
+        add_value(v);
     }
 
     // add_uint16 adds a unsigned 16-bit integer value to the datagram arranged in little-endian.
     void add_uint16(const uint16_t &v)
     {
-        check_add_length(2);
-        *(uint16_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 2;
+        add_value(swap_le(v));
     }
 
     // add_uint32 adds a unsigned 32-bit integer value to the datagram arranged in little-endian.
     void add_uint32(const uint32_t &v)
     {
-        check_add_length(4);
-        *(uint32_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 4;
+        add_value(swap_le(v));
     }
 
     // add_uint64 adds a unsigned 64-bit integer value to the datagram arranged in little-endian.
     void add_uint64(const uint64_t &v)
     {
-        check_add_length(8);
-        *(uint64_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 8;
+        add_value(swap_le(v));
     }
 
     // add_float32 adds a float (32-bit IEEE 754 floating point) value to the datagram.
     void add_float32(const float &v)
     {
-        check_add_length(4);
-        *(float *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 4;
+        add_value(swap_le(v));
     }
 
     // add_float64 adds a double (64-bit IEEE 754 floating point) value to the datagram.
     void add_float64(const double &v)
     {
-        check_add_length(8);
-        *(double *)(buf + buf_offset) = swap_le(v);
-        buf_offset += 8;
+        add_value(swap_le(v));
     }
 
     // add_size adds a datagram or field length-tag to the datagram.
@@ -299,9 +313,7 @@ class Datagram
     //       to allow for future support of larger or small length limits.
     void add_size(const dgsize_t &v)
     {
-        check_add_length(sizeof(dgsize_t));
-        *(dgsize_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += sizeof(dgsize_t);
+        add_value(swap_le(v));
     }
 
     // add_channel adds a channel to the end of the datagram.
@@ -309,9 +321,7 @@ class Datagram
     //       to allow for future support of larger or smaller channel range limits.
     void add_channel(const channel_t &v)
     {
-        check_add_length(sizeof(channel_t));
-        *(channel_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += sizeof(channel_t);
+        add_value(swap_le(v));
     }
 
     // add_doid adds a distributed object id to the end of the datagram.
@@ -319,9 +329,7 @@ class Datagram
     //       to allow for future support of larger or smaller doid range limits.
     void add_doid(const doid_t &v)
     {
-        check_add_length(sizeof(doid_t));
-        *(doid_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += sizeof(doid_t);
+        add_value(swap_le(v));
     }
 
     // add_zone adds a zone id to the end of the datagram.
@@ -329,9 +337,7 @@ class Datagram
     //       to allow for future support of larger or smaller zone range limits.
     void add_zone(const zone_t &v)
     {
-        check_add_length(sizeof(zone_t));
-        *(zone_t *)(buf + buf_offset) = swap_le(v);
-        buf_offset += sizeof(zone_t);
+        add_value(swap_le(v));
     }
 
     // add_location adds a parent-zone pair to the datagram; it is provided for convenience,
@@ -340,9 +346,11 @@ class Datagram
     void add_location(const doid_t &parent, const zone_t &zone)
     {
         check_add_length(sizeof(doid_t) + sizeof(zone_t));
-        *(doid_t *)(buf + buf_offset) = swap_le(parent);
+        const doid_t encoded_parent = swap_le(parent);
+        std::memcpy(buf + buf_offset, &encoded_parent, sizeof(encoded_parent));
         buf_offset += sizeof(doid_t);
-        *(zone_t *)(buf + buf_offset) = swap_le(zone);
+        const zone_t encoded_zone = swap_le(zone);
+        std::memcpy(buf + buf_offset, &encoded_zone, sizeof(encoded_zone));
         buf_offset += sizeof(zone_t);
     }
 
@@ -351,7 +359,7 @@ class Datagram
     {
         if(data.size()) {
             check_add_length(data.size());
-            memcpy(buf + buf_offset, &data[0], data.size());
+            std::memcpy(buf + buf_offset, data.data(), data.size());
             buf_offset += data.size();
         }
     }
@@ -359,7 +367,7 @@ class Datagram
     {
         if(str.length()) {
             check_add_length(str.length());
-            memcpy(buf + buf_offset, str.c_str(), str.length());
+            std::memcpy(buf + buf_offset, str.data(), str.length());
             buf_offset += str.length();
         }
     }
@@ -367,7 +375,7 @@ class Datagram
     {
         if(length) {
             check_add_length(length);
-            memcpy(buf + buf_offset, data, length);
+            std::memcpy(buf + buf_offset, data, length);
             buf_offset += length;
         }
     }
@@ -375,7 +383,7 @@ class Datagram
     {
         if(dg->buf_offset) {
             check_add_length(dg->buf_offset);
-            memcpy(buf + buf_offset, dg->buf, dg->buf_offset);
+            std::memcpy(buf + buf_offset, dg->buf, dg->buf_offset);
             buf_offset += dg->buf_offset;
         }
     }
@@ -384,41 +392,51 @@ class Datagram
     // a length tag (typically a uint16_t) is prepended to the string before it is added.
     void add_string(const std::string &str)
     {
-        add_size(str.length());
-        check_add_length(str.length());
-        memcpy(buf + buf_offset, str.c_str(), str.length());
-        buf_offset += str.length();
+        check_add_sized_length(str.length());
+        add_size(static_cast<dgsize_t>(str.length()));
+        if(!str.empty()) {
+            std::memcpy(buf + buf_offset, str.data(), str.length());
+            buf_offset += str.length();
+        }
     }
     void add_string(const char* str, dgsize_t length)
     {
+        check_add_sized_length(length);
         add_size(length);
-        check_add_length(length);
-        memcpy(buf + buf_offset, str, length);
-        buf_offset += length;
+        if(length) {
+            std::memcpy(buf + buf_offset, str, length);
+            buf_offset += length;
+        }
     }
 
     // add_blob adds a dclass blob to the datagram from binary data;
     // a length tag (typically a uint16_t) is prepended to the blob before it is added.
     void add_blob(const std::vector<uint8_t> &blob)
     {
-        add_size(blob.size());
-        check_add_length(blob.size());
-        memcpy(buf + buf_offset, &blob[0], blob.size());
-        buf_offset += blob.size();
+        check_add_sized_length(blob.size());
+        add_size(static_cast<dgsize_t>(blob.size()));
+        if(!blob.empty()) {
+            std::memcpy(buf + buf_offset, blob.data(), blob.size());
+            buf_offset += blob.size();
+        }
     }
     void add_blob(const uint8_t* data, dgsize_t length)
     {
+        check_add_sized_length(length);
         add_size(length);
-        check_add_length(length);
-        memcpy(buf + buf_offset, data, length);
-        buf_offset += length;
+        if(length) {
+            std::memcpy(buf + buf_offset, data, length);
+            buf_offset += length;
+        }
     }
     void add_blob(DatagramHandle dg)
     {
-        add_size(dg->buf_offset);
-        check_add_length(dg->buf_offset);
-        memcpy(buf + buf_offset, dg->buf, dg->buf_offset);
-        buf_offset += dg->buf_offset;
+        check_add_sized_length(dg->buf_offset);
+        add_size(static_cast<dgsize_t>(dg->buf_offset));
+        if(dg->buf_offset) {
+            std::memcpy(buf + buf_offset, dg->buf, dg->buf_offset);
+            buf_offset += dg->buf_offset;
+        }
     }
 
     // add_buffer reserves a buffer of size "length" at the end of the datagram

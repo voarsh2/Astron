@@ -6,6 +6,7 @@
 #include "dclass/dc/Parameter.h"
 #include "dclass/dc/ArrayType.h"
 #include "dclass/dc/NumericType.h"
+#include <cstring>
 #ifdef _DEBUG
 #include <fstream>
 #endif
@@ -33,13 +34,23 @@ class DatagramIterator
     DatagramHandle m_dg;
     size_t m_offset;
 
+    template<typename T>
+    T read_value()
+    {
+        check_read_length(sizeof(T));
+        T value;
+        std::memcpy(&value, m_dg->get_data() + m_offset, sizeof(T));
+        m_offset += sizeof(T);
+        return swap_le(value);
+    }
+
     void check_read_length(dgsize_t length)
     {
-        size_t new_offset = m_offset + length;
-        if(new_offset > m_dg->size()) {
+        const size_t size = m_dg->size();
+        if(m_offset > size || static_cast<size_t>(length) > size - m_offset) {
             std::stringstream error;
-            error << "dgi tried to read past dg end, offset+length(" << m_offset + length << ")"
-                  << " buf_size(" << m_dg->size() << ")" << std::endl;
+            error << "dgi tried to read past dg end, offset(" << m_offset << ") + length("
+                  << length << ") buf_size(" << size << ")" << std::endl;
             throw DatagramIteratorEOF(error.str());
         };
     }
@@ -61,136 +72,94 @@ class DatagramIterator
     // returning a signed 8-bit integer.
     int8_t read_int8()
     {
-        check_read_length(1);
-        int8_t r = *(int8_t*)(m_dg->get_data() + m_offset);
-        m_offset += 1;
-        return r;
+        return read_value<int8_t>();
     }
 
     // read_int16 reads 2 bytes from the datagram,
     // returning a signed 16-bit integer in native endianness.
     int16_t read_int16()
     {
-        check_read_length(2);
-        int16_t r = *(int16_t*)(m_dg->get_data() + m_offset);
-        m_offset += 2;
-        return swap_le(r);
+        return read_value<int16_t>();
     }
 
     // read_int32 reads 4 bytes from the datagram,
     // returning a signed 32-bit integer in native endianness.
     int32_t read_int32()
     {
-        check_read_length(4);
-        int32_t r = *(int32_t*)(m_dg->get_data() + m_offset);
-        m_offset += 4;
-        return swap_le(r);
+        return read_value<int32_t>();
     }
 
     // read_int64 reads 8 bytes from the datagram,
     // returning a signed 64-bit integer in native endianness.
     int64_t read_int64()
     {
-        check_read_length(8);
-        int64_t r = *(int64_t*)(m_dg->get_data() + m_offset);
-        m_offset += 8;
-        return swap_le(r);
+        return read_value<int64_t>();
     }
 
     // read_uint8 reads a byte from the datagram,
     // returning an unsigned 8-bit integer.
     uint8_t read_uint8()
     {
-        check_read_length(1);
-        uint8_t r = *(uint8_t*)(m_dg->get_data() + m_offset);
-        m_offset += 1;
-        return r;
+        return read_value<uint8_t>();
     }
 
     // read_uint16 reads 2 bytes from the datagram,
     // returning an unsigned 16-bit integer in native endianness.
     uint16_t read_uint16()
     {
-        check_read_length(2);
-        uint16_t r = *(uint16_t*)(m_dg->get_data() + m_offset);
-        m_offset += 2;
-        return swap_le(r);
+        return read_value<uint16_t>();
     }
 
     // read_uint32 reads 4 bytes from the datagram,
     // returning an unsigned 32-bit integer in native endianness.
     uint32_t read_uint32()
     {
-        check_read_length(4);
-        uint32_t r = *(uint32_t*)(m_dg->get_data() + m_offset);
-        m_offset += 4;
-        return swap_le(r);
+        return read_value<uint32_t>();
     }
 
     // read_uint64 reads 8 bytes from the datagram,
     // returning an unsigned 64-bit integer in native endianness.
     uint64_t read_uint64()
     {
-        check_read_length(8);
-        uint64_t r = *(uint64_t*)(m_dg->get_data() + m_offset);
-        m_offset += 8;
-        return swap_le(r);
+        return read_value<uint64_t>();
     }
 
     // read_size reads a dgsize_t from the datagram.
     dgsize_t read_size()
     {
-        check_read_length(sizeof(dgsize_t));
-        dgsize_t r = *(dgsize_t*)(m_dg->get_data() + m_offset);
-        m_offset += sizeof(dgsize_t);
-        return swap_le(r);
+        return read_value<dgsize_t>();
     }
 
     // read_channel reads a channel_t from the datagram.
     channel_t read_channel()
     {
-        check_read_length(sizeof(channel_t));
-        channel_t r = *(channel_t*)(m_dg->get_data() + m_offset);
-        m_offset += sizeof(channel_t);
-        return swap_le(r);
+        return read_value<channel_t>();
     }
 
     // read_doid reads a doid_t from the datagram.
     doid_t read_doid()
     {
-        check_read_length(sizeof(doid_t));
-        doid_t r = *(doid_t*)(m_dg->get_data() + m_offset);
-        m_offset += sizeof(doid_t);
-        return swap_le(r);
+        return read_value<doid_t>();
     }
 
     // read_zone reads a zone_t from the datagram.
     zone_t read_zone()
     {
-        check_read_length(sizeof(zone_t));
-        zone_t r = *(zone_t*)(m_dg->get_data() + m_offset);
-        m_offset += sizeof(zone_t);
-        return swap_le(r);
+        return read_value<zone_t>();
     }
 
     // read_float32 reads 4 bytes from the datagram,
     // returning a 32-bit float in native endianness.
     float read_float32()
     {
-        check_read_length(4);
-        float r = *(float*)(m_dg->get_data() + m_offset);
-        m_offset += 4;
-        return swap_le(r);
+        return read_value<float>();
     }
 
     // read_float64 reads 8 bytes from the datagram,
     // returning a 64-bit float (double) in native endianness.
     double read_float64()
     {
-        check_read_length(8);
-        double r = *(double*)(m_dg->get_data() + m_offset);
-        m_offset += 8;
-        return swap_le(r);
+        return read_value<double>();
     }
 
     // read_string reads a string from the datagram in the format
@@ -216,7 +185,10 @@ class DatagramIterator
     DatagramPtr read_datagram()
     {
         dgsize_t length = read_size();
-        return Datagram::create(m_dg->get_data() + m_offset, length);
+        check_read_length(length);
+        DatagramPtr dg = Datagram::create(m_dg->get_data() + m_offset, length);
+        m_offset += length;
+        return dg;
     }
 
     // read_data returns the next <length> bytes in the datagram.
