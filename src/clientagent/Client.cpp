@@ -781,8 +781,16 @@ bool Client::try_queue_pending(doid_t do_id, DatagramHandle dg)
 {
     auto it = m_pending_objects.find(do_id);
     if(it != m_pending_objects.end()) {
+        auto interest = m_pending_interests.find(it->second);
+        if(interest == m_pending_interests.end()) {
+            // A finished interest should not own pending objects. Drop any
+            // stale association rather than dereferencing an erased context.
+            m_pending_objects.erase(it);
+            return false;
+        }
+
         // the dg should be queued under the appropriate iop
-        m_pending_interests.find(it->second)->second->queue_datagram(dg);
+        interest->second->queue_datagram(dg);
         return true;
     }
     // still no idea what do_id was being talked about
@@ -974,6 +982,17 @@ void InterestOperation::finish(bool is_timeout)
     vector<DatagramHandle> dispatch = move(m_pending_datagrams);
 
     // Delete the Interest Operation
+    // A queued location entrance can be dispatched into another in-flight
+    // interest below. Remove this operation's old object associations first,
+    // so that the new interest can install its own request context.
+    for(auto it = m_client->m_pending_objects.begin();
+        it != m_client->m_pending_objects.end();) {
+        if(it->second == m_request_context) {
+            it = m_client->m_pending_objects.erase(it);
+        } else {
+            ++it;
+        }
+    }
     m_client->m_pending_interests.erase(m_request_context);
 
     // Dispatch other received and queued messages
