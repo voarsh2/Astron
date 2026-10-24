@@ -223,9 +223,41 @@ jobs:
           path: ${{ runner.temp }}/astron-linux-x64.tar.gz
           if-no-files-found: error
 
+  linux-32bit-datagram-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison build-essential cmake flex libboost-dev libuv1-dev \
+            libyaml-cpp-dev ninja-build
+
+      - name: Configure 32-bit datagram regression build
+        run: >-
+          cmake -S . -B "$RUNNER_TEMP/astron-32bit-build" -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DASTRON_REGENERATE_DC_PARSER=ON
+          -DASTRON_ENABLE_INTEGRATION_TESTS=ON
+          -DUSE_32BIT_DATAGRAMS=ON
+
+      - name: Build Astron
+        run: cmake --build "$RUNNER_TEMP/astron-32bit-build" --target astrond --parallel 3
+
+      - name: Run the wide-field-count State Server regression
+        run: ctest --test-dir "$RUNNER_TEMP/astron-32bit-build" --output-on-failure -R '^stateserver$'
+
   build:
     runs-on: ubuntu-24.04
-    needs: [windows-build, macos-tests, linux-tests]
+    needs: [windows-build, macos-tests, linux-tests, linux-32bit-datagram-test]
     permissions:
       contents: read
       packages: write

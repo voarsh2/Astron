@@ -1487,6 +1487,36 @@ class TestStateServer(ProtocolTest):
         dg.add_string('Time is candy')
         self.expect(conn, dg)
 
+        if DGSIZE_SIZE_BYTES == 4:
+            # Exercise field counts above INT16_MAX. setDb3 has no broadcast
+            # keyword, so this large update stays local to the State Server.
+            dg = Datagram.create([55555], 5, STATESERVER_OBJECT_SET_FIELDS)
+            dg.add_doid(55555)
+            field_count = 32768
+            dg.add_uint16(field_count)
+            update = Datagram()
+            update.add_uint16(setDb3)
+            update.add_string('')
+            dg.add_raw(update.get_data() * field_count)
+            conn.send(dg)
+
+            # A response to the following request proves the whole update was
+            # consumed and the State Server remained able to process traffic.
+            dg = Datagram.create([55555], 5985858, STATESERVER_OBJECT_GET_ALL)
+            dg.add_uint32(0x5112)
+            dg.add_doid(55555)
+            conn.send(dg)
+
+            dg = Datagram.create([5985858], 55555, STATESERVER_OBJECT_GET_ALL_RESP)
+            dg.add_uint32(0x5112)
+            appendMeta(dg, 55555, 12512, 66161, DistributedTestObject3)
+            dg.add_uint32(0xD00D)
+            dg.add_uint32(0)
+            dg.add_uint16(1)
+            dg.add_uint16(setDb3)
+            dg.add_string('')
+            self.expect(conn, dg)
+
         ### Cleanup ###
         deleteObject(conn, 5985858, 55555)
         self.disconnect(location)
