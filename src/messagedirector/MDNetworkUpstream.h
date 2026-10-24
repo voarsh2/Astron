@@ -3,13 +3,12 @@
 #include "net/NetworkClient.h"
 #include "net/NetworkConnector.h"
 
-// All MDUpstreams must be thread-safe. This class does not need a lock, however,
-// because all of its operations are based on local variables and the functions
-// of NetworkClient (which are themselves thread-safe)
+// All MDUpstreams must be thread-safe. Protect the staged queue and connection
+// transition because routing threads can send while the upstream connects.
 class MDNetworkUpstream : public NetworkHandler, public MDUpstream
 {
   public:
-    MDNetworkUpstream(MessageDirector *md);
+    MDNetworkUpstream(MessageDirector *md, uint64_t max_write_buffer_bytes);
 
     void connect(const std::string &address);
     void on_connect(const std::shared_ptr<uvw::TcpHandle> &socket);
@@ -17,7 +16,6 @@ class MDNetworkUpstream : public NetworkHandler, public MDUpstream
 
     // Queueing interfaces for datagrams pending being sent upstream.
     void send_datagram(DatagramHandle dg);
-    void flush_send_queue();
 
     // Interfaces that MDUpstream needs us to implement:
     virtual void subscribe_channel(channel_t c);
@@ -41,6 +39,7 @@ class MDNetworkUpstream : public NetworkHandler, public MDUpstream
     std::shared_ptr<NetworkConnector> m_connector;
     std::mutex m_messages_lock;
     std::queue<DatagramHandle> m_messages;
+    uint64_t m_max_queue_size;
+    uint64_t m_pending_queue_size = 0;
     bool m_initialized = false;
-    bool m_is_sending = false;
 };

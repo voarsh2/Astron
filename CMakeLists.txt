@@ -401,6 +401,7 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     astron_add_python_test(validate_config_core test_config.py)
     astron_add_python_test(messagedirector test_messagedirector.py)
+    astron_add_python_test(messagedirector_write_queue test_messagedirector_write_queue.py)
 
     set(ASTRON_TEST_ENV)
     if(USE_32BIT_DATAGRAMS)

@@ -39,6 +39,9 @@ web:
 messagedirector:
     bind: 0.0.0.0:6660
     #connect: 127.0.0.1:5555
+    # Maximum queued datagram payload per MD connection, including active writes.
+    # Set to zero to disable the limit. Default: 4 MiB.
+    write_buffer_size: 4194304
 
 
 # The Roles section allows specifying roles that we would like this daemon to perform.

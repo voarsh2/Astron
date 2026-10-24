@@ -18,6 +18,8 @@ static ConfigVariable<std::string> connect_addr("connect", "unspecified", md_con
 static ValidAddressConstraint valid_bind_addr(bind_addr);
 static ValidAddressConstraint valid_connect_addr(connect_addr);
 static ConfigVariable<bool> threaded_mode("threaded", true, md_config);
+static ConfigVariable<uint64_t> write_buffer_size("write_buffer_size", 4 * 1024 * 1024,
+        md_config);
 
 static ConfigGroup daemon_config("daemon");
 static ConfigVariable<std::string> daemon_name("name", "<unnamed>", daemon_config);
@@ -66,7 +68,8 @@ void MessageDirector::init_network()
         if(connect_addr.get_val() != "unspecified") {
             m_log.info() << "Connecting upstream..." << std::endl;
 
-            MDNetworkUpstream *upstream = new MDNetworkUpstream(this);
+            MDNetworkUpstream *upstream = new MDNetworkUpstream(
+                this, write_buffer_size.get_val());
 
             upstream->connect(connect_addr.get_val());
 
@@ -309,7 +312,7 @@ void MessageDirector::handle_connection(const std::shared_ptr<uvw::TcpHandle> &s
     uvw::Addr remote = socket->peer();
     m_log.info() << "Got an incoming connection from "
                  << remote.ip << ":" << remote.port << std::endl;
-    new MDNetworkParticipant(socket); // It deletes itself when connection is lost
+    new MDNetworkParticipant(socket, write_buffer_size.get_val()); // Deletes itself on disconnect.
 }
 
 void MessageDirector::handle_error(const uvw::ErrorEvent& evt)
