@@ -29,7 +29,7 @@ void MDNetworkUpstream::on_connect(const std::shared_ptr<uvw::TcpHandle> &socket
 {
     if(socket == nullptr) {
         m_message_director->receive_disconnect(uvw::ErrorEvent{(int)UV_EADDRNOTAVAIL});
-        exit(1);
+        return;
     }
 
     IntegrationTestHooks::run_before_upstream_ready([this, socket]() {

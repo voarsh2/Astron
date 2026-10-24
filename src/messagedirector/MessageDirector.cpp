@@ -104,6 +104,10 @@ void MessageDirector::shutdown_threading()
 
 void MessageDirector::route_datagram(MDParticipantInterface *p, DatagramHandle dg)
 {
+    if(m_exit_code.load() != 0) {
+        return;
+    }
+
     std::unique_lock<std::mutex> lock(m_messages_lock);
 
     // We need to hold the lock to push the datagram into the message queue, and to signal the MD thread (if in threaded mode).
@@ -145,7 +149,7 @@ void MessageDirector::flush_queue()
     {
         std::unique_lock<std::mutex> lock(m_messages_lock);
 
-        while(!m_messages.empty()) {
+        while(!m_messages.empty() && m_exit_code.load() == 0) {
             // Get and process the datagram:
             auto msg = m_messages.front();
             m_messages.pop();
@@ -165,13 +169,13 @@ void MessageDirector::routing_thread()
 {
     std::unique_lock<std::mutex> lock(m_messages_lock);
 
-    while(true) {
+    while(m_exit_code.load() == 0) {
         // Wait for something interesting to handle...
-        while(m_messages.empty() && !m_shutdown) {
+        while(m_messages.empty() && !m_shutdown && m_exit_code.load() == 0) {
             m_cv.wait(lock);
         }
 
-        if(m_shutdown) {
+        if(m_shutdown || m_exit_code.load() != 0) {
             // Ehh, we've been told to shut off:
             return;
         }
@@ -383,5 +387,19 @@ void MessageDirector::receive_datagram(DatagramHandle dg)
 void MessageDirector::receive_disconnect(const uvw::ErrorEvent &evt)
 {
     m_log.fatal() << "Lost connection to upstream md: " << evt.what() << std::endl;
-    exit(1);
+    if(m_exit_code.exchange(1) != 0) {
+        return;
+    }
+
+    // Stop the loop and let the current callback unwind before main returns.
+    // Calling exit() here can destroy mutex-owning singletons while routing
+    // callbacks still have active frames on the stack.
+    if(std::this_thread::get_id() == g_main_thread_id) {
+        g_loop->stop();
+    } else {
+        std::shared_ptr<uvw::Loop> loop = g_loop;
+        TaskQueue::singleton.enqueue_task([loop]() {
+            loop->stop();
+        });
+    }
 }

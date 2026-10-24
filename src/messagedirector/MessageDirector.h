@@ -46,6 +46,7 @@ class MessageDirector final : public ChannelMap
     // For MDUpstream (and subclasses) to call.
     void receive_datagram(DatagramHandle dg);
     void receive_disconnect(const uvw::ErrorEvent &evt);
+    int exit_code() const { return m_exit_code.load(); }
 
   protected:
     void on_add_channel(channel_t c);
@@ -68,6 +69,7 @@ class MessageDirector final : public ChannelMap
     // Threading stuff:
     bool m_shutdown;
     bool m_main_is_routing;
+    std::atomic<int> m_exit_code {0};
     std::unique_ptr<std::thread> m_thread;
     std::mutex m_participants_lock;
     std::mutex m_terminated_lock;

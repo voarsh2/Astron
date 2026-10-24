@@ -1,6 +1,7 @@
 #include "global.h"
 #include "shutdown.h"
 #include "RoleFactory.h"
+#include "messagedirector/MessageDirector.h"
 #include "config/constraints.h"
 #include "dclass/file/read.h"
 #include "dclass/dc/Class.h"
@@ -277,7 +278,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    return exit_code;
+    return exit_code != 0 ? exit_code : MessageDirector::singleton.exit_code();
 }
 
 // printHelp outputs the cli help-text to the given stream.
