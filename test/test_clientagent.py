@@ -6,6 +6,9 @@ from common.astron import *
 from common.dcfile import *
 from common.tls import *
 
+# Keep the fixed ClientAgent binds below common ephemeral-port ranges. The
+# test clients connect to the Message Director and may otherwise leave a
+# local ephemeral port in TIME_WAIT that collides with one of these listeners.
 CONFIG = """\
 messagedirector:
     bind: 127.0.0.1:57123
@@ -26,7 +29,7 @@ uberdogs:
 
 roles:
     - type: clientagent
-      bind: 127.0.0.1:57128
+      bind: 127.0.0.1:27128
       version: "Sword Art Online v5.1"
       channels:
           min: 3100
@@ -40,7 +43,7 @@ roles:
           interest_timeout: 500
 
     - type: clientagent
-      bind: 127.0.0.1:57135
+      bind: 127.0.0.1:27135
       version: "Sword Art Online v5.1"
       channels:
           min: 110600
@@ -51,7 +54,7 @@ roles:
           write_timeout_ms: 0
 
     - type: clientagent
-      bind: 127.0.0.1:57144
+      bind: 127.0.0.1:27144
       version: "Sword Art Online v5.1"
       client:
           add_interest: visible
@@ -62,7 +65,7 @@ roles:
           max: 220699
 
     - type: clientagent
-      bind: 127.0.0.1:57223
+      bind: 127.0.0.1:27223
       version: "Sword Art Online v5.1"
       haproxy: true
       channels:
@@ -70,7 +73,7 @@ roles:
           max: 440649
 
     - type: clientagent
-      bind: 127.0.0.1:51201
+      bind: 127.0.0.1:21201
       version: "Sword Art Online v5.1"
       channels:
           min: 3100
@@ -121,7 +124,7 @@ class TestClientAgent(ProtocolTest):
         s.close()
         return message
 
-    def connect(self, do_hello=True, port=57128, tls_opts=None, proxy_header=None):
+    def connect(self, do_hello=True, port=27128, tls_opts=None, proxy_header=None):
         s = socket(AF_INET, SOCK_STREAM)
         s.connect(('127.0.0.1', port))
         if proxy_header is not None:
@@ -884,7 +887,7 @@ class TestClientAgent(ProtocolTest):
 
 
         ### Send a relocate on a client agent that has it disabled
-        client2 = self.connect(port = 57135)
+        client2 = self.connect(port = 27135)
         id2 = self.identify(client2, min = 110600, max = 110699)
         self.set_state(client2, CLIENT_STATE_ESTABLISHED)
         ## Give it an object that it owns.
@@ -1849,7 +1852,7 @@ class TestClientAgent(ProtocolTest):
         self.expectNone(client)
 
         # Send an add interest on a client agent that has it disabled
-        client2 = self.connect(port = 57135)
+        client2 = self.connect(port = 27135)
         id2 = self.identify(client2, min = 110600, max = 110699)
         self.set_state(client2, CLIENT_STATE_ESTABLISHED)
         # Open interest on two zones in 1234:
@@ -1865,7 +1868,7 @@ class TestClientAgent(ProtocolTest):
         self.assertDisconnect(client2, CLIENT_DISCONNECT_FORBIDDEN_INTEREST)
 
         # Send a remove interest on a client agent that has it disabled
-        client2 = self.connect(port = 57135)
+        client2 = self.connect(port = 27135)
         id2 = self.identify(client2, min = 110600, max = 110699)
         self.set_state(client2, CLIENT_STATE_ESTABLISHED)
         # Add interest from server
@@ -1874,7 +1877,7 @@ class TestClientAgent(ProtocolTest):
         # ... and ignore all the actual interest messages
 
         # Send an add interest multiple on a client agent that has it disabled
-        client2 = self.connect(port = 57135)
+        client2 = self.connect(port = 27135)
         id2 = self.identify(client2, min = 110600, max = 110699)
         self.set_state(client2, CLIENT_STATE_ESTABLISHED)
         # Open interest on two zones in 1234:
@@ -1892,7 +1895,7 @@ class TestClientAgent(ProtocolTest):
         self.assertDisconnect(client2, CLIENT_DISCONNECT_FORBIDDEN_INTEREST)
 
         # Send a remove interest on a client agent that has it disabled
-        client2 = self.connect(port = 57135)
+        client2 = self.connect(port = 27135)
         id2 = self.identify(client2, min = 110600, max = 110699)
         self.set_state(client2, CLIENT_STATE_ESTABLISHED)
         # Add interest from server
@@ -1914,7 +1917,7 @@ class TestClientAgent(ProtocolTest):
 
         # Send an add interest on a client agent that allows only visible on a
         # visble object (in this case an uberdog object)
-        client3 = self.connect(port = 57144)
+        client3 = self.connect(port = 27144)
         id3 = self.identify(client3, min = 220600, max = 220699)
         self.set_state(client3, CLIENT_STATE_ESTABLISHED)
         # Open interest on two zones in 1234:
@@ -1970,7 +1973,7 @@ class TestClientAgent(ProtocolTest):
 
         # Send an add interest on a client agent that allows only visible on a
         # an object that is not visible to the client.
-        client3 = self.connect(port = 57144)
+        client3 = self.connect(port = 27144)
         id3 = self.identify(client3, min = 220600, max = 220699)
         self.set_state(client3, CLIENT_STATE_ESTABLISHED)
         # Open interest on two zones in 1234:
@@ -3469,7 +3472,7 @@ class TestClientAgent(ProtocolTest):
                 header = 'PROXY TCP{} {} {} {} {}\r\n'.format(
                     6 if ipv6 else 4, source_ip, dest_ip, source_port, dest_port)
 
-            client = self.connect(port=57223, proxy_header=header)
+            client = self.connect(port=27223, proxy_header=header)
 
             id = self.identify(client, min=440600, max=440699)
             dg = Datagram.create([id], 10010, CLIENTAGENT_GET_NETWORK_ADDRESS)
@@ -3513,7 +3516,7 @@ class TestClientAgent(ProtocolTest):
     def test_heartbeat_timeout(self):
         #setup
         self.server.flush()
-        client = self.connect(port = 51201)
+        client = self.connect(port = 21201)
         id = self.identify(client)
 
         # Bring client out of the sandbox

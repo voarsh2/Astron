@@ -19,8 +19,10 @@ from common.astron import (
 from common.unittests import ProtocolTest
 
 
-MD_PORT = 57123
-UPSTREAM_MD_PORT = 57124
+# Keep these fixed fixture listeners below common ephemeral-port ranges so
+# prior outbound test connections cannot leave their ports occupied in TIME_WAIT.
+MD_PORT = 27123
+UPSTREAM_MD_PORT = 27124
 CHANNEL = 0x6F12AB34
 WRITE_DATAGRAM_SIZE = Datagram.create([CHANNEL], 4321, 1337).get_size() + 1
 WRITE_BUFFER_SIZE = WRITE_DATAGRAM_SIZE * 2 - 1

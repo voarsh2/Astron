@@ -11,7 +11,9 @@ from common.unittests import ProtocolTest
 
 
 MD_PORT = 57123
-CLIENTAGENT_PORT = 57128
+# Keep this fixed listener below common ephemeral-port ranges to avoid
+# collisions with local ports left in TIME_WAIT by earlier test connections.
+CLIENTAGENT_PORT = 27128
 PARENT = 1234
 ZONE = 4321
 OBJECT = 8888

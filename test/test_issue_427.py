@@ -31,7 +31,9 @@ roles:
       control: 100100
 
     - type: clientagent
-      bind: 127.0.0.1:57128
+      # Keep the fixed listener below common ephemeral-port ranges to avoid
+      # collisions with earlier test connections left in TIME_WAIT.
+      bind: 127.0.0.1:27128
       version: "Sword Art Online v5.1"
       channels:
           min: 3100
@@ -129,7 +131,7 @@ class TestIssue427(ProtocolTest):
 
     def connect(self):
         client_socket = socket(AF_INET, SOCK_STREAM)
-        client_socket.connect(("127.0.0.1", 57128))
+        client_socket.connect(("127.0.0.1", 27128))
         client = ClientConnection(client_socket)
 
         hello = Datagram()
