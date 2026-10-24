@@ -3,13 +3,19 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import uuid
 
 from common.process_output import ProcessOutput
 
 
 MONGO_HOST = '127.0.0.1'
 MONGO_PORT = int(os.environ.get('ASTRON_MONGO_TEST_PORT', '57024'))
-MONGO_URI = 'mongodb://%s:%d/test' % (MONGO_HOST, MONGO_PORT)
+# External MongoDB services can preserve their data between local/Compose test
+# runs. Give each Python test process its own database, matching the clean
+# temporary dbpath used when the tests launch mongod themselves.
+MONGO_URI = 'mongodb://%s:%d/astron_test_%s' % (
+    MONGO_HOST, MONGO_PORT, uuid.uuid4().hex
+)
 MONGO_INVALID_URI = 'baddb://%s:%d/test' % (MONGO_HOST, MONGO_PORT)
 MONGO_STARTUP_TIMEOUT = 60
 
@@ -98,3 +104,12 @@ def teardown_mongo(unittest):
     mongo_path = getattr(unittest, 'mongo_path', None)
     if mongo_path is not None:
         shutil.rmtree(mongo_path, ignore_errors=True)
+
+    external = os.environ.get('ASTRON_MONGO_TEST_EXTERNAL', '').lower() in ('1', 'true', 'yes')
+    if external:
+        cleanup_executable = os.environ.get('ASTRON_MONGO_TEST_CLEANUP')
+        if not cleanup_executable:
+            raise RuntimeError(
+                'ASTRON_MONGO_TEST_CLEANUP must name the MongoDB test cleanup executable'
+            )
+        subprocess.run([cleanup_executable, MONGO_URI], check=True, timeout=30)

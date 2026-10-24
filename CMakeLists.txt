@@ -145,6 +145,7 @@ set(ASTRON_SOURCES
     ${NET_FILES}
 )
 set(ASTRON_DB_LIBRARIES)
+set(ASTRON_MONGO_LIBRARIES)
 
 if(BUILD_DBSERVER)
     list(APPEND ASTRON_SOURCES
@@ -170,13 +171,14 @@ if(BUILD_DBSERVER)
         find_package(mongocxx 4.4 CONFIG REQUIRED)
 
         if(TARGET mongo::mongocxx_shared AND TARGET mongo::bsoncxx_shared)
-            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_shared mongo::bsoncxx_shared)
+            set(ASTRON_MONGO_LIBRARIES mongo::mongocxx_shared mongo::bsoncxx_shared)
         elseif(TARGET mongo::mongocxx_static AND TARGET mongo::bsoncxx_static)
-            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_static mongo::bsoncxx_static)
+            set(ASTRON_MONGO_LIBRARIES mongo::mongocxx_static mongo::bsoncxx_static)
         else()
             message(FATAL_ERROR "MongoDB C++ driver was found, but it did not export supported CMake targets")
         endif()
 
+        list(APPEND ASTRON_DB_LIBRARIES ${ASTRON_MONGO_LIBRARIES})
         list(APPEND ASTRON_SOURCES src/database/MongoDatabase.cpp)
     endif()
 
@@ -412,5 +414,9 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     if(ASTRON_TEST_ENV)
         set_tests_properties(${ASTRON_PYTHON_TESTS} PROPERTIES ENVIRONMENT "${ASTRON_TEST_ENV}")
+    endif()
+    if(BUILD_DB_MONGO)
+        set_property(TEST db_mongo validate_config_dbmongo APPEND PROPERTY ENVIRONMENT
+            "ASTRON_MONGO_TEST_CLEANUP=$<TARGET_FILE:astron_mongo_test_cleanup>")
     endif()
 endif()
