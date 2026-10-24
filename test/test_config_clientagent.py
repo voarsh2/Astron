@@ -32,6 +32,8 @@ class TestConfigClientAgent(ConfigTest):
                   client:
                       relocate: true
                       add_interest: enabled
+                  tuning:
+                      historical_object_ttl_ms: 60000
 
                 - type: clientagent
                   bind: 127.0.0.1:57135
@@ -58,6 +60,11 @@ class TestConfigClientAgent(ConfigTest):
                       max: 220699
             """ % test_dc
         self.assertEqual(self.checkConfig(config), 'Valid')
+        config = config.replace(
+            'historical_object_ttl_ms: 60000',
+            'historical_object_ttl_ms: 18446744073709551615',
+        )
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_invalid_attr(self):
         config = """\

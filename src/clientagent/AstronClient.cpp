@@ -537,10 +537,8 @@ class AstronClient : public Client, public NetworkHandler
         if(!dcc) {
             if(is_historical_object(do_id)) {
                 // The client isn't disconnected in this case because it could be a delayed
-                // message, we also have to skip to the end so a disconnect overside_datagram
-                // is not sent.
-                // TODO: Allow configuration to limit how long historical objects remain,
-                //       for example with a timeout or bad-message limit.
+                // message. Skip the remainder to avoid an oversized-datagram disconnect; the
+                // configured historical-object TTL bounds this grace period.
                 dgi.skip(dgi.get_remaining());
             } else {
                 stringstream ss;
@@ -632,10 +630,8 @@ class AstronClient : public Client, public NetworkHandler
         if(!is_owned) {
             if(is_historical_object(do_id)) {
                 // The client isn't disconnected in this case because it could be a delayed
-                // message, we also have to skip to the end so a disconnect overside_datagram
-                // is not sent.
-                // TODO: Allow configuration to limit how long historical objects remain,
-                //       for example with a timeout or bad-message limit.
+                // message. Skip the remainder to avoid an oversized-datagram disconnect; the
+                // configured historical-object TTL bounds this grace period.
                 dgi.skip(dgi.get_remaining());
             }
 

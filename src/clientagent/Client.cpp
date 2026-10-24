@@ -9,7 +9,9 @@ using dclass::Class;
 
 Client::Client(ConfigNode, ClientAgent* client_agent) :
     m_lifetime(std::make_shared<ClientLifetime>(this)),
-    m_client_agent(client_agent)
+    m_client_agent(client_agent),
+    m_historical_objects(std::chrono::milliseconds(
+        static_cast<std::chrono::milliseconds::rep>(client_agent->m_historical_object_ttl_ms)))
 {
     assert(std::this_thread::get_id() == g_main_thread_id);
 
@@ -296,7 +298,7 @@ void Client::close_zones(doid_t parent, const unordered_set<zone_t> &killed_zone
             handle_remove_object(visible_object.id);
 
             m_seen_objects.erase(visible_object.id);
-            m_historical_objects.insert(visible_object.id);
+            m_historical_objects.remember(visible_object.id);
             to_remove.push_back(visible_object.id);
         }
     }
@@ -311,11 +313,11 @@ void Client::close_zones(doid_t parent, const unordered_set<zone_t> &killed_zone
     }
 }
 
-// is_historical_object returns true if the object was once visible to the client, but has
-// since been deleted.  The return is still true even if the object has become visible again.
+// is_historical_object returns true if the object was previously visible and its configured
+// historical grace period has not expired, even if it has become visible again.
 bool Client::is_historical_object(doid_t do_id)
 {
-    return m_historical_objects.find(do_id) != m_historical_objects.end();
+    return m_historical_objects.contains(do_id);
 }
 
 // send_disconnect must close any connections with a connected client;
@@ -573,7 +575,7 @@ void Client::handle_datagram(DatagramHandle in_dg, DatagramIterator &dgi)
             m_owned_objects.erase(do_id);
         }
 
-        m_historical_objects.insert(do_id);
+        m_historical_objects.remember(do_id);
         m_visible_objects.erase(do_id);
     }
     break;
@@ -731,7 +733,7 @@ void Client::handle_datagram(DatagramHandle in_dg, DatagramIterator &dgi)
 
             handle_remove_object(do_id);
             m_seen_objects.erase(do_id);
-            m_historical_objects.insert(do_id);
+            m_historical_objects.remember(do_id);
             m_visible_objects.erase(do_id);
         }
 

@@ -351,6 +351,16 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
 
     add_test(NAME datagram_safety COMMAND test_datagram_safety)
 
+    add_executable(test_historical_objects test/test_historical_objects.cpp)
+    target_include_directories(test_historical_objects PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test_historical_objects PRIVATE dclass)
+    add_test(NAME historical_objects COMMAND test_historical_objects)
+
+    if(BUILD_DB_MONGO)
+        add_executable(astron_mongo_test_cleanup test/mongo_test_cleanup.cpp)
+        target_link_libraries(astron_mongo_test_cleanup PRIVATE ${ASTRON_MONGO_LIBRARIES})
+    endif()
+
     set(ASTRON_PYTHON_TESTS)
     function(astron_add_python_test name script)
         add_test(NAME "${name}"

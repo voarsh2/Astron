@@ -87,6 +87,11 @@ roles:
         # This is a feature specific to the Astron client, a custom client class
         # could define its own set of configuration values.
         relocate: true # Default: false
+      tuning:
+        # How long previously visible object IDs are treated as historical when filtering
+        # delayed client messages. After expiry, delayed messages are treated as unknown IDs.
+        # Zero keeps them for the client's entire lifetime.
+        historical_object_ttl_ms: 0
       # Channels defines the range of channels this clientagent can assign to Clients
       channels:
           min: 100100
