@@ -47,6 +47,11 @@ void astron_handle_signals()
 }
 
 #else /* Handle POSIX signals */
+// TODO: Defer SIGINT handling to the main event loop and stop network
+// participants there. This handler logs and calls exit() from signal context.
+// Concurrent shutdown has reproduced heap corruption, including on an older
+// binary. NetworkClient's raw handler pointer is a lifetime risk to investigate,
+// but the specific cause has not been confirmed.
 static void handle_interrupt(int)
 {
     interrupts += 1;

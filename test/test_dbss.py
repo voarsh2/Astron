@@ -219,6 +219,32 @@ class TestDBStateServer(ProtocolTest):
         self.shard.send(Datagram.create_remove_channel(80000<<ZONE_SIZE_BITS|100))
         self.shard.send(Datagram.create_remove_channel(80000<<ZONE_SIZE_BITS|101))
 
+    def test_activate_other_non_class_type(self):
+        doid = 9051
+
+        # Block is a valid distributed type, but it is a struct rather than a
+        # dclass. The field payload makes the old handler dereference the null
+        # dclass pointer while constructing the LoadingObject.
+        dg = Datagram.create([doid], 5, DBSS_OBJECT_ACTIVATE_WITH_DEFAULTS_OTHER)
+        appendMeta(dg, doid, 0, 0, Block)
+        dg.add_uint16(1)  # One other field.
+        dg.add_uint16(setRequired1)
+        dg.add_uint32(123)
+        self.shard.send(dg)
+
+        # This response fences the malformed activation: the DBSS must have
+        # ignored it and remain alive without activating the object.
+        dg = Datagram.create([doid], 5, DBSS_OBJECT_GET_ACTIVATED)
+        dg.add_uint32(1)
+        dg.add_doid(doid)
+        self.shard.send(dg)
+
+        expected = Datagram.create([5], doid, DBSS_OBJECT_GET_ACTIVATED_RESP)
+        expected.add_uint32(1)
+        expected.add_doid(doid)
+        expected.add_uint8(BOOL_NO)
+        self.expect(self.shard, expected)
+
     # Tests the messages OBJECT_GET_ALL
     def test_get_all(self):
         self.database.flush()

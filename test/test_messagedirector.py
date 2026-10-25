@@ -666,6 +666,34 @@ class TestMessageDirector(ProtocolTest):
         self.__class__.c1 = self.connectToServer()
         self.l1.flush()
 
+    def test_drop_buffered_frames_after_disconnect(self):
+        self.l1.flush()
+        self.c1.flush()
+        self.c2.flush()
+
+        # An empty malformed datagram disconnects c1. Put a valid routed
+        # datagram behind it in the same TCP write to exercise buffered frames.
+        malformed = Datagram()
+        routed = Datagram.create([1234], 4321, 1337)
+        routed.add_string('must be dropped')
+
+        framed = Datagram()
+        for dg in (malformed, routed):
+            framed.add_size(dg.get_size())
+            framed.add_raw(dg.get_data())
+        self.c1.s.sendall(framed.get_data())
+        self.assertConnectionClosed(self.c1)
+
+        # A later message from c2 is the positive stream barrier. If the
+        # buffered datagram was routed, it would arrive ahead of this one.
+        barrier = Datagram.create([1235], 4322, 1338)
+        self.c2.send(barrier)
+        self.expect(self.l1, barrier)
+
+        self.c1.close()
+        self.__class__.c1 = self.connectToServer()
+        self.l1.flush()
+
     def test_malformed_single(self):
         dg = Datagram()
         dg.add_uint16(0) # Datagram length

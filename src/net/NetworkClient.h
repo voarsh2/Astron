@@ -177,6 +177,7 @@ private:
     bool m_is_local = false;
 
     uint64_t m_total_queue_size = 0;
+    uint64_t m_in_flight_queue_size = 0;
     uint64_t m_max_queue_size = 0;
     unsigned int m_write_timeout = 0;
     std::vector<DatagramHandle> m_send_queue;

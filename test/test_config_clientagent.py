@@ -5,6 +5,8 @@ from common.dcfile import *
 
 class TestConfigClientAgent(ConfigTest):
     def test_clientagent_good(self):
+        # Keep the fixed ClientAgent binds below common ephemeral-port ranges
+        # so earlier test connections cannot leave them occupied in TIME_WAIT.
         config = """\
             messagedirector:
                 bind: 127.0.0.1:57123
@@ -24,7 +26,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 3100
@@ -32,9 +34,11 @@ class TestConfigClientAgent(ConfigTest):
                   client:
                       relocate: true
                       add_interest: enabled
+                  tuning:
+                      historical_object_ttl_ms: 60000
 
                 - type: clientagent
-                  bind: 127.0.0.1:57135
+                  bind: 127.0.0.1:27135
                   version: "Sword Art Online v5.1"
                   client:
                       type: libastron
@@ -46,7 +50,7 @@ class TestConfigClientAgent(ConfigTest):
                       max: 110699
 
                 - type: clientagent
-                  bind: 127.0.0.1:57144
+                  bind: 127.0.0.1:27144
                   version: "Sword Art Online v5.1"
                   client:
                       type: libastron
@@ -58,6 +62,11 @@ class TestConfigClientAgent(ConfigTest):
                       max: 220699
             """ % test_dc
         self.assertEqual(self.checkConfig(config), 'Valid')
+        config = config.replace(
+            'historical_object_ttl_ms: 60000',
+            'historical_object_ttl_ms: 18446744073709551615',
+        )
+        self.assertEqual(self.checkConfig(config), 'Invalid')
 
     def test_ca_invalid_attr(self):
         config = """\
@@ -66,7 +75,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 3100
@@ -82,7 +91,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 0
@@ -96,7 +105,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 3100
@@ -111,7 +120,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 100
@@ -125,7 +134,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   channels:
                       min: 3100
@@ -140,7 +149,7 @@ class TestConfigClientAgent(ConfigTest):
 
             roles:
                 - type: clientagent
-                  bind: 127.0.0.1:57128
+                  bind: 127.0.0.1:27128
                   version: "Sword Art Online v5.1"
                   client:
                       type: astron

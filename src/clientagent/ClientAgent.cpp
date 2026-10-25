@@ -8,6 +8,8 @@
 #include "config/constraints.h"
 #include "dclass/file/hash.h"
 #include "net/TcpAcceptor.h"
+#include <chrono>
+#include <limits>
 using namespace std;
 
 RoleConfigGroup clientagent_config("clientagent");
@@ -36,6 +38,16 @@ ConfigConstraint<string> client_type_exists(have_client_type, ca_client_type,
 
 static ConfigGroup tuning_config("tuning", clientagent_config);
 static ConfigVariable<unsigned long> interest_timeout("interest_timeout", 500, tuning_config);
+static ConfigVariable<uint64_t> historical_object_ttl_config("historical_object_ttl_ms", 0,
+        tuning_config);
+static bool is_valid_historical_object_ttl(const uint64_t &ttl_ms)
+{
+    using MillisecondsRep = std::chrono::milliseconds::rep;
+    return ttl_ms <= static_cast<uint64_t>(std::numeric_limits<MillisecondsRep>::max());
+}
+static ConfigConstraint<uint64_t> valid_historical_object_ttl(
+        is_valid_historical_object_ttl, historical_object_ttl_config,
+        "Historical object TTL exceeds the supported millisecond range.");
 
 ClientAgent::ClientAgent(RoleConfig roleconfig) : Role(roleconfig), m_net_acceptor(nullptr),
     m_server_version(server_version.get_rval(roleconfig))
@@ -67,6 +79,7 @@ ClientAgent::ClientAgent(RoleConfig roleconfig) : Role(roleconfig), m_net_accept
     // Load tuning parameters.
     ConfigNode tuning = clientagent_config.get_child_node(tuning_config, roleconfig);
     m_interest_timeout = interest_timeout.get_rval(tuning);
+    m_historical_object_ttl_ms = historical_object_ttl_config.get_rval(tuning);
 
     TcpAcceptorCallback callback = std::bind(&ClientAgent::handle_tcp, this,
                                    std::placeholders::_1,

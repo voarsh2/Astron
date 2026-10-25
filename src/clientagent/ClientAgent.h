@@ -70,4 +70,5 @@ class ClientAgent final : public Role
     uint32_t m_hash;
 
     unsigned long m_interest_timeout;
+    uint64_t m_historical_object_ttl_ms = 0;
 };

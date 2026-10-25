@@ -492,7 +492,7 @@ void DistributedObject::handle_datagram(DatagramHandle, DatagramIterator &dgi)
             break;    // Not meant for me!
         }
         uint16_t field_count = dgi.read_uint16();
-        for(int16_t i = 0; i < field_count; ++i) {
+        for(uint32_t i = 0; i < field_count; ++i) {
             if(!handle_one_update(dgi, sender)) {
                 break;
             }

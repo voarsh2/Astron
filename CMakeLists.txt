@@ -145,6 +145,7 @@ set(ASTRON_SOURCES
     ${NET_FILES}
 )
 set(ASTRON_DB_LIBRARIES)
+set(ASTRON_MONGO_LIBRARIES)
 
 if(BUILD_DBSERVER)
     list(APPEND ASTRON_SOURCES
@@ -170,13 +171,14 @@ if(BUILD_DBSERVER)
         find_package(mongocxx 4.4 CONFIG REQUIRED)
 
         if(TARGET mongo::mongocxx_shared AND TARGET mongo::bsoncxx_shared)
-            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_shared mongo::bsoncxx_shared)
+            set(ASTRON_MONGO_LIBRARIES mongo::mongocxx_shared mongo::bsoncxx_shared)
         elseif(TARGET mongo::mongocxx_static AND TARGET mongo::bsoncxx_static)
-            list(APPEND ASTRON_DB_LIBRARIES mongo::mongocxx_static mongo::bsoncxx_static)
+            set(ASTRON_MONGO_LIBRARIES mongo::mongocxx_static mongo::bsoncxx_static)
         else()
             message(FATAL_ERROR "MongoDB C++ driver was found, but it did not export supported CMake targets")
         endif()
 
+        list(APPEND ASTRON_DB_LIBRARIES ${ASTRON_MONGO_LIBRARIES})
         list(APPEND ASTRON_SOURCES src/database/MongoDatabase.cpp)
     endif()
 
@@ -351,6 +353,16 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
 
     add_test(NAME datagram_safety COMMAND test_datagram_safety)
 
+    add_executable(test_historical_objects test/test_historical_objects.cpp)
+    target_include_directories(test_historical_objects PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(test_historical_objects PRIVATE dclass)
+    add_test(NAME historical_objects COMMAND test_historical_objects)
+
+    if(BUILD_DB_MONGO)
+        add_executable(astron_mongo_test_cleanup test/mongo_test_cleanup.cpp)
+        target_link_libraries(astron_mongo_test_cleanup PRIVATE ${ASTRON_MONGO_LIBRARIES})
+    endif()
+
     set(ASTRON_PYTHON_TESTS)
     function(astron_add_python_test name script)
         add_test(NAME "${name}"
@@ -391,6 +403,7 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     astron_add_python_test(validate_config_core test_config.py)
     astron_add_python_test(messagedirector test_messagedirector.py)
+    astron_add_python_test(messagedirector_write_queue test_messagedirector_write_queue.py)
 
     set(ASTRON_TEST_ENV)
     if(USE_32BIT_DATAGRAMS)
@@ -401,5 +414,9 @@ if(ASTRON_ENABLE_INTEGRATION_TESTS)
     endif()
     if(ASTRON_TEST_ENV)
         set_tests_properties(${ASTRON_PYTHON_TESTS} PROPERTIES ENVIRONMENT "${ASTRON_TEST_ENV}")
+    endif()
+    if(BUILD_DB_MONGO)
+        set_property(TEST db_mongo validate_config_dbmongo APPEND PROPERTY ENVIRONMENT
+            "ASTRON_MONGO_TEST_CLEANUP=$<TARGET_FILE:astron_mongo_test_cleanup>")
     endif()
 endif()

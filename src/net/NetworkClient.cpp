@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include "core/global.h"
 #include "config/ConfigVariable.h"
+#include "util/IntegrationTestHooks.h"
 
 NetworkClient::NetworkClient(NetworkHandler *handler) : m_handler(handler), m_socket(nullptr),
                                                         m_async_timer(), m_send_queue(),
@@ -90,20 +91,26 @@ void NetworkClient::send_datagram(DatagramHandle dg)
 {
     std::unique_lock<std::mutex> lock(m_mutex);
 
-    // If we aren't connected, stop here.
-    if(!is_connected(lock)) {
+    // Once teardown starts, drain only the writes already accepted. In
+    // particular, don't let new traffic extend a disconnect caused by an
+    // over-limit queue.
+    if(!is_connected(lock) || m_local_disconnect || m_disconnect_handled) {
         return;
     }
 
-    // Put the packet in our outgoing send queue
-    m_send_queue.push_back(dg);
-
-    // Check our quota, disconnect if it's too much
-    m_total_queue_size += dg->size();
-    if(m_total_queue_size > m_max_queue_size && m_max_queue_size != 0) {
+    // Bound pending and in-flight payload bytes. The active write stays charged
+    // until its completion callback, even after it leaves m_send_queue.
+    const uint64_t datagram_size = static_cast<uint64_t>(dg->size());
+    if(m_max_queue_size != 0 &&
+       (datagram_size > m_max_queue_size ||
+        m_total_queue_size > m_max_queue_size - datagram_size)) {
+        IntegrationTestHooks::write_buffer_overflow();
         disconnect(UV_ENOBUFS, lock);
         return;
     }
+
+    m_send_queue.push_back(dg);
+    m_total_queue_size += datagram_size;
 
     // Poke the main thread to flush its buffer (it's fine if this is called
     // twice, it checks if it's already sending)
@@ -140,6 +147,12 @@ void NetworkClient::defragment_input(std::unique_lock<std::mutex>& lock)
             lock.unlock();
             m_handler->receive_datagram(dg);
             lock.lock();
+            if(m_local_disconnect || m_disconnect_handled) {
+                // The handler may leave the socket open while a disconnect
+                // response drains. Discard any frames buffered behind it.
+                m_data_buf.clear();
+                return;
+            }
         }
         else {
             return;
@@ -153,6 +166,11 @@ void NetworkClient::process_datagram(const std::unique_ptr<char[]>& data, size_t
 
     // This function should ONLY run in the main thread. It's a libuv event.
     assert(std::this_thread::get_id() == g_main_thread_id);
+
+    if(m_local_disconnect || m_disconnect_handled) {
+        m_data_buf.clear();
+        return;
+    }
 
     if(m_data_buf.size() == 0 && size >= sizeof(dgsize_t)) {
         // Fast-path mode: Check if we have just enough data from the stream for a single datagram.
@@ -226,7 +244,8 @@ void NetworkClient::start_receive()
     });
 
     m_socket->on<uvw::WriteEvent>([self = shared_from_this()](const uvw::WriteEvent&, uvw::TcpHandle &) {
-        self->send_finished();
+        IntegrationTestHooks::run_before_network_write_completion(
+            [self]() { self->send_finished(); });
     });
 
     m_async_timer->on<uvw::TimerEvent>([self = shared_from_this()](const uvw::TimerEvent&, uvw::TimerHandle &) {
@@ -275,6 +294,12 @@ void NetworkClient::handle_disconnect(uv_errno_t ec, std::unique_lock<std::mutex
 
     m_disconnect_handled = true;
 
+    // A closed connection cannot drain its queued datagrams. An in-flight
+    // buffer remains allocated until libuv's write callback releases it.
+    m_send_queue.clear();
+    m_total_queue_size = 0;
+    m_in_flight_queue_size = 0;
+
     shutdown(lock);
 
     // Do NOT hold the lock when calling this. Our handler may acquire a
@@ -316,8 +341,10 @@ void NetworkClient::flush_send_queue(std::unique_lock<std::mutex> &lock)
 
     // Figure out how big of a send buffer we need
     size_t buffer_size = 0;
+    uint64_t in_flight_queue_size = 0;
     for(auto dg : m_send_queue) {
         buffer_size += sizeof(dgsize_t) + dg->size();
+        in_flight_queue_size += static_cast<uint64_t>(dg->size());
     }
     assert(m_send_buf == nullptr);
     m_send_buf = new char[buffer_size];
@@ -333,15 +360,13 @@ void NetworkClient::flush_send_queue(std::unique_lock<std::mutex> &lock)
         // Add the data:
         memcpy(send_ptr, dg->get_data(), dg->size());
         send_ptr += dg->size();
-
-        // Discount it from our send queue:
-        m_total_queue_size -= dg->size();
     }
     assert(send_ptr == &m_send_buf[buffer_size]);
 
     // Clean up our m_send_queue:
-    assert(m_total_queue_size == 0);
     m_send_queue.clear();
+    m_in_flight_queue_size = in_flight_queue_size;
+    assert(m_total_queue_size == m_in_flight_queue_size);
 
     // Start async timeout, a value of 0 indicates the writes shouldn't timeout (used in debugging)
     if(m_write_timeout > 0) {
@@ -371,6 +396,10 @@ void NetworkClient::send_finished()
     assert(m_send_buf != nullptr);
     delete [] m_send_buf;
     m_send_buf = nullptr;
+
+    assert(m_in_flight_queue_size <= m_total_queue_size);
+    m_total_queue_size -= m_in_flight_queue_size;
+    m_in_flight_queue_size = 0;
 
     // If we aren't connected, stop here
     if(!is_connected(lock)) {
@@ -407,6 +436,7 @@ void NetworkClient::send_expired()
     m_send_buf = nullptr;
 
     m_total_queue_size = 0;
+    m_in_flight_queue_size = 0;
     m_send_queue.clear();
 
     disconnect(UV_ETIMEDOUT, lock);

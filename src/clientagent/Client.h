@@ -3,6 +3,7 @@
 #include "messagedirector/MessageDirector.h"
 #include "util/EventSender.h"
 #include "util/Timeout.h"
+#include "clientagent/HistoricalObjectTracker.h"
 
 #include <vector>
 #include <memory>
@@ -129,9 +130,9 @@ class Client : public MDParticipantInterface
     // client disconnects.  Additionally, these objects are presumed to be required for the
     // client, so if one is delete, the client is dropped.
     std::unordered_set<doid_t> m_session_objects;
-    // m_historical_objects is a list of all objects which where previously visible, but have
-    // had their visibility removed; a historical object may have become visible again
-    std::unordered_set<doid_t> m_historical_objects;
+    // Previously visible objects remain recognized for delayed-message filtering. The
+    // configured TTL is opt-in; zero preserves indefinite retention.
+    HistoricalObjectTracker m_historical_objects;
     // m_visible_objects is a map which relates all visible objects to VisibleObject metadata.
     std::unordered_map<doid_t, VisibleObject> m_visible_objects;
     // m_declared_objects is a map of declared objects to their metadata.

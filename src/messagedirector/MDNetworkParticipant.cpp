@@ -3,11 +3,13 @@
 #include "core/msgtypes.h"
 #include "util/IntegrationTestHooks.h"
 
-MDNetworkParticipant::MDNetworkParticipant(const std::shared_ptr<uvw::TcpHandle> &socket)
+MDNetworkParticipant::MDNetworkParticipant(const std::shared_ptr<uvw::TcpHandle> &socket,
+                                           uint64_t max_write_buffer_bytes)
     : MDParticipantInterface(), m_client(std::make_shared<NetworkClient>(this))
 {
     set_con_name("Network Participant");
 
+    m_client->set_write_buffer(max_write_buffer_bytes);
     m_client->initialize(socket);
 }
 
