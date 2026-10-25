@@ -19,6 +19,8 @@ using dclass::Class;
 #include "util/IntegrationTestHooks.h"
 #include "util/filesystem.h"
 
+#include <cstdlib>
+
 using namespace std;
 
 static LogCategory mainlog("main", "Main");
@@ -278,7 +280,21 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    return exit_code != 0 ? exit_code : MessageDirector::singleton.exit_code();
+    if(exit_code != 0) {
+        return exit_code;
+    }
+
+    const int message_director_exit_code = MessageDirector::singleton.exit_code();
+    if(message_director_exit_code != 0) {
+        // Upstream loss is fatal, and this exit follows an incomplete network
+        // teardown. Flush the error output, then avoid static destructors that
+        // may touch still-open loop resources or their callbacks.
+        cout.flush();
+        cerr.flush();
+        std::_Exit(message_director_exit_code);
+    }
+
+    return 0;
 }
 
 // printHelp outputs the cli help-text to the given stream.
